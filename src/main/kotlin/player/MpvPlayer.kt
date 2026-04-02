@@ -14,7 +14,7 @@ import java.nio.channels.SocketChannel
 data class QueueItem(val url: String, val videoId: String, val title: String)
 
 class MpvPlayer {
-    private val socketPath = "/tmp/native-player-mpv.sock"
+    private val socketPath = "/tmp/wren-mpv.sock"
     private var process: Process? = null
     private var channel: SocketChannel? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())

@@ -1,1 +1,1 @@
-rootProject.name = "native-player"
+rootProject.name = "wren"

@@ -30,9 +30,12 @@ compose.desktop {
         mainClass = "MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm)
-            packageName = "native-player"
+            packageName = "wren"
             packageVersion = "1.0.0"
             modules("java.net.http")
+            linux {
+                iconFile.set(project.file("wren.png"))
+            }
         }
     }
 }
