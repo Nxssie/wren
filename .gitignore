@@ -1,0 +1,7 @@
+.gradle/
+build/
+.kotlin/
+*.AppImage
+NativePlayer.AppDir/
+appimagetool
+api.json
