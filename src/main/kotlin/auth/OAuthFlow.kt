@@ -17,7 +17,7 @@ private const val SCOPE = "https://www.googleapis.com/auth/youtube"
 private const val REDIRECT_PORT = 8765
 private const val REDIRECT_URI = "http://localhost:$REDIRECT_PORT"
 
-private val credentialsFile = java.io.File(System.getProperty("user.home"), ".config/native-player/oauth.json")
+private val credentialsFile = java.io.File(System.getProperty("user.home"), ".config/wren/oauth.json")
 
 data class OAuthCredentials(val clientId: String, val clientSecret: String)
 

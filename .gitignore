@@ -2,6 +2,6 @@
 build/
 .kotlin/
 *.AppImage
-NativePlayer.AppDir/
+Wren.AppDir/
 appimagetool
 api.json

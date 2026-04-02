@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="native-player"
-APP_DIR="NativePlayer.AppDir"
-OUTPUT="NativePlayer.AppImage"
+APP_NAME="wren"
+APP_DIR="Wren.AppDir"
+OUTPUT="Wren.AppImage"
 APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
 APPIMAGETOOL="./appimagetool"
 
@@ -34,7 +34,7 @@ cp -r "$DIST_DIR"/. "$APP_DIR/"
 cat > "$APP_DIR/AppRun" << 'EOF'
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/bin/native-player" "$@"
+exec "$HERE/bin/wren" "$@"
 EOF
 chmod +x "$APP_DIR/AppRun"
 
@@ -42,9 +42,9 @@ chmod +x "$APP_DIR/AppRun"
 cat > "$APP_DIR/${APP_NAME}.desktop" << EOF
 [Desktop Entry]
 Type=Application
-Name=Native Player
-Exec=native-player
-Icon=native-player
+Name=Wren
+Exec=wren
+Icon=wren
 Categories=AudioVideo;Music;
 EOF
 

@@ -6,7 +6,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 
 object AuthManager {
-    private val configDir = File(System.getProperty("user.home"), ".config/native-player")
+    private val configDir = File(System.getProperty("user.home"), ".config/wren")
     private val tokensFile = File(configDir, "tokens.json")
     private val accountNameFile = File(configDir, "account_name")
     private val avatarUrlFile = File(configDir, "avatar_url")

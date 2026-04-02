@@ -122,7 +122,7 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                "~/.config/native-player/oauth.json",
+                "~/.config/wren/oauth.json",
                 color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium
             )
             Spacer(Modifier.height(16.dp))
