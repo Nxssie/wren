@@ -100,6 +100,27 @@ suspend fun fetchPlaylistTracks(playlistId: String): List<PlaylistTrack> = withC
     tracks.map { it.copy(duration = durMap[it.videoId] ?: "") }
 }
 
+suspend fun fetchViewCounts(videoIds: List<String>): Map<String, Long> = withContext(Dispatchers.IO) {
+    if (videoIds.isEmpty()) return@withContext emptyMap()
+    val token = AuthManager.accessToken ?: return@withContext emptyMap()
+    val ids = videoIds.joinToString(",")
+    val response = ytApiClient.send(
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://www.googleapis.com/youtube/v3/videos?part=statistics&id=$ids"))
+            .header("Authorization", "Bearer $token")
+            .GET().build(),
+        HttpResponse.BodyHandlers.ofString()
+    )
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+        ?: return@withContext emptyMap()
+    root["items"]?.jsonArray?.associate { item ->
+        val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: ""
+        val count = item.jsonObject["statistics"]?.jsonObject
+            ?.get("viewCount")?.jsonPrimitive?.longOrNull ?: 0L
+        id to count
+    } ?: emptyMap()
+}
+
 private fun parseIsoDuration(iso: String): String {
     val h = Regex("(\\d+)H").find(iso)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     val m = Regex("(\\d+)M").find(iso)?.groupValues?.get(1)?.toIntOrNull() ?: 0

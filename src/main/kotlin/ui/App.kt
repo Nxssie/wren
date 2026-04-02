@@ -27,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.res.loadImageBitmap
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import kotlinx.coroutines.Dispatchers
@@ -49,15 +51,26 @@ fun AppWindow(onCloseRequest: () -> Unit) {
     var authenticated by remember { mutableStateOf(AuthManager.isAuthenticated) }
     var showAuthDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(0) }
+    var artistBrowseId by remember { mutableStateOf<String?>(null) }
+    var artistName by remember { mutableStateOf("") }
 
     DisposableEffect(Unit) {
         player.start()
         onDispose { player.stop() }
     }
 
+    val appIcon = remember {
+        BitmapPainter(
+            Thread.currentThread().contextClassLoader!!
+                .getResourceAsStream("wren.png")!!
+                .use(::loadImageBitmap)
+        )
+    }
+
     Window(
         onCloseRequest = onCloseRequest,
-        title = "Native Player",
+        title = "Wren",
+        icon = appIcon,
         state = WindowState(width = 960.dp, height = 700.dp)
     ) {
         MaterialTheme(
@@ -72,14 +85,24 @@ fun AppWindow(onCloseRequest: () -> Unit) {
                     Sidebar(
                         authenticated = authenticated,
                         selectedTab = selectedTab,
-                        onTabChange = { selectedTab = it },
+                        onTabChange = { selectedTab = it; artistBrowseId = null },
                         onLoginRequest = { showAuthDialog = true },
                         onLogout = { AuthManager.logout(); authenticated = false }
                     )
                     Box(Modifier.weight(1f).fillMaxHeight()) {
-                        when (selectedTab) {
-                            0 -> SearchScreen(player)
-                            1 -> LibraryScreen(player)
+                        val browseId = artistBrowseId
+                        when {
+                            browseId != null -> ArtistScreen(
+                                browseId = browseId,
+                                player = player,
+                                onBack = { artistBrowseId = null },
+                                onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
+                            )
+                            selectedTab == 0 -> SearchScreen(
+                                player = player,
+                                onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
+                            )
+                            selectedTab == 1 -> LibraryScreen(player)
                         }
                     }
                 }

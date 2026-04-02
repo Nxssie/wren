@@ -3,6 +3,7 @@ package ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,7 +11,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VideoLibrary
+import api.ArtistResult
+import api.Source
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,24 +34,55 @@ import api.SearchResult
 import api.YoutubeMusic
 import api.resolveStreamUrl
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import player.MpvPlayer
 import player.QueueItem
 import java.net.URL
 
+enum class SortOrder(val label: String) {
+    POPULARITY("Popularity"),
+    RELEVANCE("Relevance"),
+    YT_MUSIC_FIRST("YT Music first"),
+    YOUTUBE_FIRST("YouTube first"),
+    DURATION("Duration")
+}
+
+private fun List<SearchResult>.sorted(order: SortOrder): List<SearchResult> = when (order) {
+    SortOrder.POPULARITY    -> sortedByDescending { it.viewCount ?: -1L }
+    SortOrder.RELEVANCE     -> this
+    SortOrder.YT_MUSIC_FIRST -> sortedBy { if (it.source == Source.YT_MUSIC) 0 else 1 }
+    SortOrder.YOUTUBE_FIRST -> sortedBy { if (it.source == Source.YOUTUBE) 0 else 1 }
+    SortOrder.DURATION      -> sortedBy { parseDurationToSeconds(it.duration) }
+}
+
+private fun parseDurationToSeconds(duration: String): Int {
+    val parts = duration.split(":").mapNotNull { it.toIntOrNull() }
+    return when (parts.size) {
+        2 -> parts[0] * 60 + parts[1]
+        3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else -> 0
+    }
+}
+
 @Composable
-fun SearchScreen(player: MpvPlayer) {
+fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: String) -> Unit) {
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var rawResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var sortOrder by remember { mutableStateOf(SortOrder.POPULARITY) }
     var loading by remember { mutableStateOf(false) }
+    var sortExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    val results = remember(rawResults, sortOrder) { rawResults.sorted(sortOrder) }
 
     fun doSearch() {
         if (query.isBlank()) return
         scope.launch {
             loading = true
-            results = YoutubeMusic.search(query)
+            rawResults = YoutubeMusic.search(query)
             loading = false
             results.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
         }
@@ -78,7 +115,45 @@ fun SearchScreen(player: MpvPlayer) {
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        if (rawResults.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Sort by", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.width(8.dp))
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Surface)
+                            .clickable { sortExpanded = true }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(sortOrder.label, color = TextPrimary, fontSize = 12.sp)
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null,
+                            tint = TextSecondary, modifier = Modifier.size(16.dp))
+                    }
+                    DropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false },
+                        modifier = Modifier.background(Surface)
+                    ) {
+                        SortOrder.entries.forEach { option ->
+                            DropdownMenuItem(onClick = { sortOrder = option; sortExpanded = false }) {
+                                Text(
+                                    option.label,
+                                    color = if (option == sortOrder) Accent else TextPrimary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -89,7 +164,7 @@ fun SearchScreen(player: MpvPlayer) {
             }
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 items(results.size) { index ->
-                    TrackRow(results[index], index, results, player)
+                    TrackRow(results[index], index, results, player, onArtistClick)
                 }
             }
         }
@@ -97,9 +172,16 @@ fun SearchScreen(player: MpvPlayer) {
 }
 
 @Composable
-fun TrackRow(result: SearchResult, index: Int, results: List<SearchResult>, player: MpvPlayer) {
+fun TrackRow(
+    result: SearchResult,
+    index: Int,
+    results: List<SearchResult>,
+    player: MpvPlayer,
+    onArtistClick: ((browseId: String, name: String) -> Unit)?
+) {
     val currentTitle by player.currentTitle
     val active = currentTitle == result.videoId
+    val canNavigateArtist = onArtistClick != null && result.artistId != null
 
     Row(
         modifier = Modifier
@@ -125,14 +207,25 @@ fun TrackRow(result: SearchResult, index: Int, results: List<SearchResult>, play
             )
             Text(
                 result.artist,
-                color = TextSecondary,
+                color = if (canNavigateArtist) Accent.copy(alpha = 0.75f) else TextSecondary,
                 fontSize = 12.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = if (canNavigateArtist) Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { onArtistClick!!(result.artistId!!, result.artist) } else Modifier
             )
         }
         Spacer(Modifier.width(16.dp))
         Text(result.duration, color = TextSecondary, fontSize = 12.sp)
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            imageVector = if (result.source == Source.YT_MUSIC) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
+            contentDescription = if (result.source == Source.YT_MUSIC) "YouTube Music" else "YouTube",
+            tint = if (result.source == Source.YT_MUSIC) Color(0xFFFF0000) else Color(0xFFFF6D00),
+            modifier = Modifier.size(14.dp)
+        )
     }
 }
 
