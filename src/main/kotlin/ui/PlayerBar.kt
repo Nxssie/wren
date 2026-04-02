@@ -106,29 +106,7 @@ fun PlayerBar(player: MpvPlayer) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Volume control
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.width(180.dp)
-            ) {
-                Icon(
-                    if (volume > 0) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                    contentDescription = null, tint = TextSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Slider(
-                    value = volume.toFloat(),
-                    onValueChange = { player.setVolume(it.toInt()) },
-                    valueRange = 0f..100f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = TextSecondary,
-                        activeTrackColor = TextSecondary,
-                        inactiveTrackColor = Color(0xFF333333)
-                    ),
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            Spacer(Modifier.width(180.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
@@ -178,7 +156,29 @@ fun PlayerBar(player: MpvPlayer) {
                 }
             }
 
-            Spacer(Modifier.width(180.dp))
+            // Volume control
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.width(180.dp)
+            ) {
+                Icon(
+                    if (volume > 0) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                    contentDescription = null, tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Slider(
+                    value = volume.toFloat(),
+                    onValueChange = { player.setVolume(it.toInt()) },
+                    valueRange = 0f..100f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = TextSecondary,
+                        activeTrackColor = TextSecondary,
+                        inactiveTrackColor = Color(0xFF333333)
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }
