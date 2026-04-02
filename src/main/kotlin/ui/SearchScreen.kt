@@ -71,6 +71,7 @@ private fun parseDurationToSeconds(duration: String): Int {
 fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: String) -> Unit) {
     var query by remember { mutableStateOf("") }
     var rawResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var artistResults by remember { mutableStateOf<List<ArtistResult>>(emptyList()) }
     var sortOrder by remember { mutableStateOf(SortOrder.POPULARITY) }
     var loading by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
@@ -82,7 +83,12 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
         if (query.isBlank()) return
         scope.launch {
             loading = true
-            rawResults = YoutubeMusic.search(query)
+            coroutineScope {
+                val songs = async { YoutubeMusic.search(query) }
+                val artists = async { YoutubeMusic.searchArtists(query) }
+                rawResults = songs.await()
+                artistResults = artists.await()
+            }
             loading = false
             results.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
         }
