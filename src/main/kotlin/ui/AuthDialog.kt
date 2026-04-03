@@ -57,7 +57,7 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Iniciar sesión", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Text("Sign in", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(24.dp))
             when {
                 error != null -> {
@@ -68,17 +68,17 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
                         colors = ButtonDefaults.buttonColors(backgroundColor = Surface),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Cerrar", color = TextSecondary, fontSize = 14.sp)
+                        Text("Close", color = TextSecondary, fontSize = 14.sp)
                     }
                 }
                 authUrl == null -> {
                     CircularProgressIndicator(color = Accent, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
                     Spacer(Modifier.height(16.dp))
-                    Text("Preparando enlace de autorización...", color = TextSecondary, fontSize = 13.sp)
+                    Text("Preparing authorization link...", color = TextSecondary, fontSize = 13.sp)
                 }
                 else -> {
                     Text(
-                        "Se ha abierto el navegador. Autoriza la aplicación para continuar.",
+                        "The browser has been opened. Authorize the app to continue.",
                         color = TextSecondary, fontSize = 13.sp, textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(16.dp))
@@ -86,17 +86,17 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
                         onClick = { openInBrowser(authUrl!!) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Abrir enlace de nuevo", color = Accent, fontSize = 13.sp)
+                        Text("Open link again", color = Accent, fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(color = Accent, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
-                        Text("Esperando autorización...", color = TextSecondary, fontSize = 13.sp)
+                        Text("Waiting for authorization...", color = TextSecondary, fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(20.dp))
                     TextButton(onClick = { onDismiss() }) {
-                        Text("Cancelar", color = TextSecondary, fontSize = 12.sp)
+                        Text("Cancel", color = TextSecondary, fontSize = 12.sp)
                     }
                 }
             }
@@ -114,10 +114,10 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Configuración requerida", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Text("Setup required", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(16.dp))
             Text(
-                "Para iniciar sesión necesitas crear credenciales OAuth en Google Cloud y guardarlas en:",
+                "To sign in you need to create OAuth credentials in Google Cloud and save them to:",
                 color = TextSecondary, fontSize = 13.sp, textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(12.dp))
@@ -127,10 +127,10 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                "1. Abre Google Cloud Console\n" +
-                "2. Crea un proyecto y habilita \"YouTube Data API v3\"\n" +
-                "3. Crea credenciales → OAuth 2.0 → Aplicación de escritorio\n" +
-                "4. Guarda el archivo con este formato:",
+                "1. Open Google Cloud Console\n" +
+                "2. Create a project and enable \"YouTube Data API v3\"\n" +
+                "3. Create credentials → OAuth 2.0 → Desktop app\n" +
+                "4. Save the file with this format:",
                 color = TextSecondary, fontSize = 12.sp
             )
             Spacer(Modifier.height(12.dp))
@@ -145,10 +145,10 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { openInBrowser("https://console.cloud.google.com/apis/credentials") }) {
-                    Text("Abrir Cloud Console", color = Accent, fontSize = 13.sp)
+                    Text("Open Cloud Console", color = Accent, fontSize = 13.sp)
                 }
                 TextButton(onClick = onDismiss) {
-                    Text("Cerrar", color = TextSecondary, fontSize = 13.sp)
+                    Text("Close", color = TextSecondary, fontSize = 13.sp)
                 }
             }
         }
