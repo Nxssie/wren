@@ -72,6 +72,7 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
     var query by remember { mutableStateOf("") }
     var rawResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     var artistResults by remember { mutableStateOf<List<ArtistResult>>(emptyList()) }
+    var showAllArtists by remember { mutableStateOf(false) }
     var sortOrder by remember { mutableStateOf(SortOrder.POPULARITY) }
     var loading by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
@@ -83,6 +84,7 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
         if (query.isBlank()) return
         scope.launch {
             loading = true
+            showAllArtists = false
             coroutineScope {
                 val songs = async { YoutubeMusic.search(query) }
                 val artists = async { YoutubeMusic.searchArtists(query) }
@@ -165,10 +167,43 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Accent)
             }
-            results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            results.isEmpty() && artistResults.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Search for music to get started", color = TextSecondary, fontSize = 15.sp)
             }
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (artistResults.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Artists",
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                        )
+                    }
+                    val visibleArtists = if (showAllArtists) artistResults else artistResults.take(3)
+                    items(visibleArtists.size) { index ->
+                        ArtistRow(visibleArtists[index], onArtistClick)
+                    }
+                    if (artistResults.size > 3) {
+                        item {
+                            Text(
+                                if (showAllArtists) "Show less" else "See all ${artistResults.size} artists",
+                                color = Accent,
+                                fontSize = 12.sp,
+                                modifier = Modifier
+                                    .clickable { showAllArtists = !showAllArtists }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                    item {
+                        Divider(
+                            color = Color(0xFF2A2A2A),
+                            modifier = Modifier.padding(vertical = 10.dp)
+                        )
+                    }
+                }
                 items(results.size) { index ->
                     TrackRow(results[index], index, results, player, onArtistClick)
                 }
@@ -236,6 +271,51 @@ fun TrackRow(
 }
 
 @Composable
+fun ArtistRow(artist: ArtistResult, onArtistClick: (browseId: String, name: String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onArtistClick(artist.browseId, artist.name) }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Thumbnail(
+            artist.thumbnailUrl ?: "",
+            Modifier.size(48.dp).clip(androidx.compose.foundation.shape.CircleShape)
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                artist.name,
+                color = TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            val sub = artist.subscriberCount?.let { formatSubscribers(it) }
+            val subtitleText = if (sub != null) "$sub monthly listeners" else artist.subtitle
+            if (subtitleText.isNotEmpty()) {
+                Text(
+                    subtitleText,
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Icon(
+            Icons.Default.MusicNote,
+            contentDescription = "Artist",
+            tint = Color(0xFFFF0000),
+            modifier = Modifier.size(14.dp)
+        )
+    }
+}
+
+@Composable
 fun Thumbnail(url: String, modifier: Modifier) {
     var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
 
@@ -260,4 +340,10 @@ fun Thumbnail(url: String, modifier: Modifier) {
             )
         }
     }
+}
+
+private fun formatSubscribers(count: Long): String = when {
+    count >= 1_000_000 -> "%.1fM".format(count / 1_000_000.0).trimEnd('0').trimEnd('.')
+    count >= 1_000     -> "%.1fK".format(count / 1_000.0).trimEnd('0').trimEnd('.')
+    else               -> count.toString()
 }

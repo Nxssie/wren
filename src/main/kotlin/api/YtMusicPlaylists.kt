@@ -100,6 +100,27 @@ suspend fun fetchPlaylistTracks(playlistId: String): List<PlaylistTrack> = withC
     tracks.map { it.copy(duration = durMap[it.videoId] ?: "") }
 }
 
+suspend fun fetchSubscriberCounts(channelIds: List<String>): Map<String, Long> = withContext(Dispatchers.IO) {
+    if (channelIds.isEmpty()) return@withContext emptyMap()
+    val token = AuthManager.accessToken ?: return@withContext emptyMap()
+    val ids = channelIds.joinToString(",")
+    val response = ytApiClient.send(
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://www.googleapis.com/youtube/v3/channels?part=statistics&id=$ids"))
+            .header("Authorization", "Bearer $token")
+            .GET().build(),
+        HttpResponse.BodyHandlers.ofString()
+    )
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+        ?: return@withContext emptyMap()
+    root["items"]?.jsonArray?.associate { item ->
+        val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: ""
+        val count = item.jsonObject["statistics"]?.jsonObject
+            ?.get("subscriberCount")?.jsonPrimitive?.longOrNull ?: 0L
+        id to count
+    } ?: emptyMap()
+}
+
 suspend fun fetchViewCounts(videoIds: List<String>): Map<String, Long> = withContext(Dispatchers.IO) {
     if (videoIds.isEmpty()) return@withContext emptyMap()
     val token = AuthManager.accessToken ?: return@withContext emptyMap()

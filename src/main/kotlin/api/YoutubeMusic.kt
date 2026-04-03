@@ -10,7 +10,8 @@ data class ArtistResult(
     val browseId: String,
     val name: String,
     val thumbnailUrl: String?,
-    val subtitle: String
+    val subtitle: String,
+    val subscriberCount: Long? = null
 )
 
 data class SearchResult(
@@ -30,8 +31,16 @@ data class SearchResult(
 }
 
 object YoutubeMusic {
-    suspend fun searchArtists(query: String): List<ArtistResult> =
-        searchYouTubeMusicArtists(query)
+    suspend fun searchArtists(query: String): List<ArtistResult> = coroutineScope {
+        if (AuthManager.isAuthenticated) AuthManager.ensureValidToken()
+        val filtered = async { searchYouTubeMusicArtists(query) }
+        val general = async { searchYouTubeMusicArtistsFromGeneral(query) }
+        // Merge: prefer general's entry (has listener count) over filtered's when both exist
+        val generalMap = general.await().associateBy { it.browseId }
+        val combined = (filtered.await().map { generalMap[it.browseId] ?: it } + general.await())
+            .distinctBy { it.browseId }
+        combined.sortedByDescending { it.subscriberCount ?: -1L }
+    }
 
     suspend fun search(query: String, limit: Int = 20): List<SearchResult> = coroutineScope {
         if (AuthManager.isAuthenticated) AuthManager.ensureValidToken()

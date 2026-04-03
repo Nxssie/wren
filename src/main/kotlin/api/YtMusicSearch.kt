@@ -121,6 +121,86 @@ suspend fun searchYouTubeMusicArtists(query: String): List<ArtistResult> = withC
     parseArtistResults(response.body())
 }
 
+suspend fun searchYouTubeMusicArtistsFromGeneral(query: String): List<ArtistResult> = withContext(Dispatchers.IO) {
+    val body = buildJsonObject {
+        putJsonObject("context") {
+            putJsonObject("client") {
+                put("clientName", "WEB_REMIX")
+                put("clientVersion", CLIENT_VERSION)
+                put("hl", "en")
+            }
+        }
+        put("query", query)
+    }.toString()
+
+    val response = client.send(
+        HttpRequest.newBuilder()
+            .uri(URI.create("https://music.youtube.com/youtubei/v1/search?key=$API_KEY&prettyPrint=false"))
+            .header("Content-Type", "application/json")
+            .header("X-YouTube-Client-Name", "67")
+            .header("X-YouTube-Client-Version", CLIENT_VERSION)
+            .header("Origin", "https://music.youtube.com")
+            .header("Referer", "https://music.youtube.com/")
+            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build(),
+        HttpResponse.BodyHandlers.ofString()
+    )
+
+    parseArtistsFromGeneralSearch(response.body())
+}
+
+private fun parseArtistsFromGeneralSearch(body: String): List<ArtistResult> {
+    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyList()
+    val tabs = root.dig("contents", "tabbedSearchResultsRenderer", "tabs")?.jsonArray ?: return emptyList()
+    val sections = tabs.firstOrNull()
+        ?.dig("tabRenderer", "content", "sectionListRenderer", "contents")
+        ?.jsonArray ?: return emptyList()
+
+    val results = mutableListOf<ArtistResult>()
+    for (section in sections) {
+        // Top result card — often the most prominent artist
+        section.jsonObject["musicCardShelfRenderer"]?.jsonObject?.let { card ->
+            val browseId = card.dig("title", "runs")?.jsonArray
+                ?.firstOrNull()?.jsonObject
+                ?.dig("navigationEndpoint", "browseEndpoint", "browseId")
+                ?.jsonPrimitive?.content ?: return@let
+            if (!browseId.startsWith("UC")) return@let
+            val name = card.dig("title", "runs")?.jsonArray
+                ?.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content ?: return@let
+            val subtitleRuns = card["subtitle"]?.jsonObject?.get("runs")?.jsonArray
+            val subtitle = subtitleRuns?.joinToString("") { it.jsonObject["text"]?.jsonPrimitive?.content ?: "" } ?: ""
+            val listeners = subtitleRuns?.getOrNull(2)?.jsonObject?.get("text")?.jsonPrimitive?.content
+                ?.let { parseListenerCount(it) }
+            val thumbUrl = card.dig("thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")
+                ?.jsonArray?.lastOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.content
+            if (results.none { it.browseId == browseId })
+                results.add(ArtistResult(browseId, name, thumbUrl, subtitle, listeners))
+        }
+        // Inline artist entries inside shelves
+        section.jsonObject["musicShelfRenderer"]?.jsonObject?.let { shelf ->
+            for (item in shelf["contents"]?.jsonArray ?: return@let) {
+                val r = item.jsonObject["musicResponsiveListItemRenderer"]?.jsonObject ?: continue
+                val browseId = r.dig("navigationEndpoint", "browseEndpoint", "browseId")
+                    ?.jsonPrimitive?.content ?: continue
+                if (!browseId.startsWith("UC")) continue
+                val name = r.digRuns("flexColumns", 0, "musicResponsiveListItemFlexColumnRenderer") ?: continue
+                val subtitleRuns = r["flexColumns"]?.jsonArray?.getOrNull(1)
+                    ?.jsonObject?.get("musicResponsiveListItemFlexColumnRenderer")?.jsonObject
+                    ?.dig("text", "runs")?.jsonArray
+                val subtitle = subtitleRuns?.joinToString("") { it.jsonObject["text"]?.jsonPrimitive?.content ?: "" } ?: ""
+                val listeners = subtitleRuns?.getOrNull(2)?.jsonObject?.get("text")?.jsonPrimitive?.content
+                    ?.let { parseListenerCount(it) }
+                val thumbUrl = r.dig("thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")
+                    ?.jsonArray?.lastOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.content
+                if (results.none { it.browseId == browseId })
+                    results.add(ArtistResult(browseId, name, thumbUrl, subtitle, listeners))
+            }
+        }
+    }
+    return results
+}
+
 private fun parseArtistResults(body: String): List<ArtistResult> {
     val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyList()
     val tabs = root.dig("contents", "tabbedSearchResultsRenderer", "tabs")?.jsonArray ?: return emptyList()
@@ -135,15 +215,31 @@ private fun parseArtistResults(body: String): List<ArtistResult> {
             val r = item.jsonObject["musicResponsiveListItemRenderer"]?.jsonObject ?: continue
             val browseId = r.dig("navigationEndpoint", "browseEndpoint", "browseId")
                 ?.jsonPrimitive?.content ?: continue
-            if (!browseId.startsWith("UC")) continue  // only artist pages
             val name = r.digRuns("flexColumns", 0, "musicResponsiveListItemFlexColumnRenderer") ?: continue
-            val subtitle = r.digRuns("flexColumns", 1, "musicResponsiveListItemFlexColumnRenderer") ?: ""
+            val subtitleRuns = r["flexColumns"]?.jsonArray?.getOrNull(1)
+                ?.jsonObject?.get("musicResponsiveListItemFlexColumnRenderer")?.jsonObject
+                ?.dig("text", "runs")?.jsonArray
+            val subtitle = subtitleRuns?.joinToString("") { it.jsonObject["text"]?.jsonPrimitive?.content ?: "" } ?: ""
+            val listeners = subtitleRuns?.getOrNull(2)?.jsonObject?.get("text")?.jsonPrimitive?.content
+                ?.let { parseListenerCount(it) }
             val thumbUrl = r.dig("thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")
                 ?.jsonArray?.lastOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.content
-            results.add(ArtistResult(browseId, name, thumbUrl, subtitle))
+            results.add(ArtistResult(browseId, name, thumbUrl, subtitle, listeners))
         }
     }
     return results
+}
+
+// Parses YTMusic listener/subscriber strings like "750 K usuarios mensuales",
+// "4,03 M usuarios mensuales", "945 suscriptores" → Long (or null if unrecognised).
+private fun parseListenerCount(text: String): Long? {
+    val normalized = text.trim().replace(",", ".")
+    val mMatch = Regex("""^([\d.]+)\s*[Mm]""").find(normalized)
+    if (mMatch != null) return (mMatch.groupValues[1].toDoubleOrNull()?.times(1_000_000))?.toLong()
+    val kMatch = Regex("""^([\d.]+)\s*[Kk]""").find(normalized)
+    if (kMatch != null) return (kMatch.groupValues[1].toDoubleOrNull()?.times(1_000))?.toLong()
+    val plain = Regex("""^(\d+)""").find(normalized)
+    return plain?.groupValues?.get(1)?.toLongOrNull()
 }
 
 private fun JsonElement.dig(vararg keys: String): JsonElement? {
