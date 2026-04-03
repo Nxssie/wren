@@ -77,9 +77,11 @@ private fun parseResults(body: String, limit: Int): List<SearchResult> {
                 ?.firstOrNull()?.jsonObject
                 ?.dig("navigationEndpoint", "browseEndpoint", "browseId")
                 ?.jsonPrimitive?.content
-            val duration = r.dig("fixedColumns")?.jsonArray?.firstOrNull()
-                ?.dig("musicResponsiveListItemFixedColumnRenderer", "text", "runs")
-                ?.jsonArray?.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content ?: ""
+            val duration = r["flexColumns"]?.jsonArray?.getOrNull(1)
+                ?.jsonObject?.get("musicResponsiveListItemFlexColumnRenderer")?.jsonObject
+                ?.dig("text", "runs")?.jsonArray
+                ?.lastOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content
+                ?.takeIf { ':' in it } ?: ""
             val thumbUrl = r.dig("thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")
                 ?.jsonArray?.lastOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.content
                 ?: "https://i.ytimg.com/vi/$videoId/mqdefault.jpg"
