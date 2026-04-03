@@ -38,7 +38,7 @@ fun LibraryScreen(player: MpvPlayer) {
 
     if (!AuthManager.isAuthenticated) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Inicia sesión para ver tu biblioteca", color = TextSecondary, fontSize = 15.sp)
+            Text("Sign in to view your library", color = TextSecondary, fontSize = 15.sp)
         }
         return
     }
@@ -56,7 +56,7 @@ fun LibraryScreen(player: MpvPlayer) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { selectedPlaylist = null; tracks = emptyList() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Volver", tint = TextPrimary)
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
                 Spacer(Modifier.width(4.dp))
                 Text(selectedPlaylist!!.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -80,7 +80,7 @@ fun LibraryScreen(player: MpvPlayer) {
                 }
             } else if (playlists?.isEmpty() == true) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No se encontraron playlists", color = TextSecondary, fontSize = 15.sp)
+                    Text("No playlists found", color = TextSecondary, fontSize = 15.sp)
                 }
             } else {
                 LazyColumn(
@@ -118,7 +118,7 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(playlist.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${playlist.itemCount} canciones", color = TextSecondary, fontSize = 12.sp)
+            Text("${playlist.itemCount} songs", color = TextSecondary, fontSize = 12.sp)
         }
     }
 }

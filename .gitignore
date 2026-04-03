@@ -2,5 +2,9 @@
 build/
 .kotlin/
 *.AppImage
-Wren.AppDir/
+*.AppDir/
 appimagetool
+wren.af
+wren.af~lock~*
+icon.png
+gradle.properties

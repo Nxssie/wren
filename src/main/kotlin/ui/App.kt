@@ -150,7 +150,7 @@ private fun Sidebar(
         ) {
             Icon(
                 imageVector = if (expanded) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
-                contentDescription = if (expanded) "Colapsar" else "Expandir",
+                contentDescription = if (expanded) "Collapse" else "Expand",
                 tint = TextSecondary,
                 modifier = Modifier.padding(end = if (expanded) 12.dp else 0.dp).size(22.dp)
             )
@@ -162,14 +162,14 @@ private fun Sidebar(
         // Nav items
         NavItem(
             icon = Icons.Default.Search,
-            label = "Buscar",
+            label = "Search",
             selected = selectedTab == 0,
             expanded = expanded,
             onClick = { onTabChange(0) }
         )
         NavItem(
             icon = Icons.Default.LibraryMusic,
-            label = "Biblioteca",
+            label = "Library",
             selected = selectedTab == 1,
             expanded = expanded,
             onClick = { onTabChange(1) }
@@ -255,9 +255,9 @@ private fun UserSection(expanded: Boolean, onLogout: () -> Unit) {
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar sesión", tint = TextSecondary, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Sign out", tint = TextSecondary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
-                Text("Cerrar sesión", color = TextSecondary, fontSize = 13.sp)
+                Text("Sign out", color = TextSecondary, fontSize = 13.sp)
             }
         }
 
@@ -292,7 +292,7 @@ private fun UserSection(expanded: Boolean, onLogout: () -> Unit) {
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        accountName ?: "Cuenta",
+                        accountName ?: "Account",
                         color = TextPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
@@ -323,10 +323,10 @@ private fun LoginButton(expanded: Boolean, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
     ) {
-        Icon(Icons.Default.AccountCircle, contentDescription = "Iniciar sesión", tint = TextSecondary, modifier = Modifier.size(22.dp))
+        Icon(Icons.Default.AccountCircle, contentDescription = "Sign in", tint = TextSecondary, modifier = Modifier.size(22.dp))
         if (expanded) {
             Spacer(Modifier.width(12.dp))
-            Text("Iniciar sesión", color = TextSecondary, fontSize = 13.sp)
+            Text("Sign in", color = TextSecondary, fontSize = 13.sp)
         }
     }
 }

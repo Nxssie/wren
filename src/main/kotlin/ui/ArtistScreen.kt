@@ -62,7 +62,7 @@ fun ArtistScreen(
                     onBack()
                 }
             }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = TextPrimary)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
             }
             Spacer(Modifier.width(4.dp))
             val label = selectedAlbum?.title ?: artistData?.name
@@ -76,7 +76,7 @@ fun ArtistScreen(
                 CircularProgressIndicator(color = Accent)
             }
             artistData == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No se pudo cargar el artista", color = TextSecondary, fontSize = 15.sp)
+                Text("Failed to load artist", color = TextSecondary, fontSize = 15.sp)
             }
             selectedAlbum != null -> {
                 // Album track list
@@ -116,7 +116,7 @@ fun ArtistScreen(
                         if (albumTracks.isEmpty()) {
                             item {
                                 Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                                    Text("No hay canciones disponibles", color = TextSecondary, fontSize = 14.sp)
+                                    Text("No songs available", color = TextSecondary, fontSize = 14.sp)
                                 }
                             }
                         } else {
@@ -161,7 +161,7 @@ fun ArtistScreen(
                     // Top songs
                     if (data.topSongs.isNotEmpty()) {
                         item {
-                            SectionHeader("Canciones populares")
+                            SectionHeader("Popular songs")
                         }
                         items(data.topSongs.size) { index ->
                             Box(Modifier.padding(horizontal = 16.dp)) {
