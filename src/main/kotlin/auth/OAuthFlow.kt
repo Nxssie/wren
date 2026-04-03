@@ -56,10 +56,10 @@ suspend fun waitForAuthCode(): String = withContext(Dispatchers.IO) {
             val code = request.substringAfter("?").substringBefore(" ")
                 .split("&").firstOrNull { it.startsWith("code=") }
                 ?.removePrefix("code=")
-                ?: throw Exception("No se recibió el código de autorización")
+                ?: throw Exception("No authorization code received")
 
             val html = "<html><body style='font-family:sans-serif;text-align:center;padding:60px'>" +
-                "<h2>¡Autorización completada!</h2><p>Puedes cerrar esta ventana.</p></body></html>"
+                "<h2>Authorization complete!</h2><p>You can close this window.</p></body></html>"
             val response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n$html"
             socket.getOutputStream().write(response.toByteArray())
             code
@@ -81,7 +81,7 @@ suspend fun exchangeCode(code: String, creds: OAuthCredentials): OAuthTokens = w
     OAuthTokens(
         accessToken = obj["access_token"]!!.jsonPrimitive.content,
         refreshToken = obj["refresh_token"]?.jsonPrimitive?.content
-            ?: throw Exception("No se recibió refresh_token. Asegúrate de que el scope incluye acceso offline."),
+            ?: throw Exception("No refresh_token received. Make sure the scope includes offline access."),
         expiresAt = System.currentTimeMillis() / 1000 + (obj["expires_in"]?.jsonPrimitive?.long ?: 3600)
     )
 }

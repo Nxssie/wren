@@ -116,7 +116,7 @@ fun PlayerBar(player: MpvPlayer) {
                 ) {
                     Icon(
                         Icons.Default.SkipPrevious,
-                        contentDescription = "Anterior",
+                        contentDescription = "Previous",
                         tint = if (hasPrevious) TextPrimary else TextSecondary.copy(alpha = 0.3f),
                         modifier = Modifier.size(28.dp)
                     )
@@ -149,7 +149,7 @@ fun PlayerBar(player: MpvPlayer) {
                 ) {
                     Icon(
                         Icons.Default.SkipNext,
-                        contentDescription = "Siguiente",
+                        contentDescription = "Next",
                         tint = if (hasNext) TextPrimary else TextSecondary.copy(alpha = 0.3f),
                         modifier = Modifier.size(28.dp)
                     )
