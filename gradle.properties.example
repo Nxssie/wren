@@ -1,0 +1,4 @@
+# Copy this file to gradle.properties and set your local JDK path.
+# Example (sdkman): /home/<user>/.sdkman/candidates/java/21.0.10-amzn
+# Leave empty to use the JDK on your PATH.
+#org.gradle.java.home=
