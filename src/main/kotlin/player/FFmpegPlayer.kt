@@ -91,7 +91,11 @@ class FFmpegPlayer {
         queue.value = shuffled
         queueIndex.value = startIndex
         val item = shuffled[startIndex]
-        loadInternal(item.url, item.videoId, item.title)
+        // Pre-resolve stream URL in background so playback starts instantly
+        scope.launch {
+            val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+            loadInternal(resolvedUrl, item.videoId, item.title)
+        }
         prefetchAt(shuffled, startIndex + 1, count = 4)
     }
 
