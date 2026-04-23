@@ -10,14 +10,15 @@ A native Linux music player built with Kotlin and Compose Desktop. Searches and 
 - Google OAuth login to access your YouTube Music playlists and library
 - Popularity-based artist sorting using monthly listener counts parsed directly from the YTMusic API
 - Collapsible sidebar, persistent player bar with seek, volume, and queue controls
-- Stream URL resolution via the YouTube InnerTube API (no `yt-dlp` dependency)
+- Stream URL resolution via `yt-dlp` (bundled in AppImage, or available in PATH)
 - 4-hour stream URL cache to avoid redundant requests
 
 ## Stack
 
 - **UI**: [Compose Desktop](https://www.jetbrains.com/compose-multiplatform/) (Jetpack Compose for JVM)
 - **Language**: Kotlin
-- **Player**: [mpv](https://mpv.io/) controlled over a Unix domain socket IPC
+- **Player**: [JavaCV](https://github.com/bytedeco/javacv) + FFmpeg (in-process audio decoding and playback)
+- **Stream resolution**: `yt-dlp` (for reliable YouTube stream URL extraction)
 - **Concurrency**: Kotlin coroutines (`async`/`coroutineScope` for parallel API calls)
 - **Serialization**: `kotlinx.serialization`
 - **Auth**: OAuth 2.0 with PKCE-style local redirect, implemented from scratch without third-party auth libraries
@@ -37,7 +38,7 @@ src/main/kotlin/
 │   ├── AuthManager.kt        # Token lifecycle, yt-dlp cache sync
 │   └── OAuthFlow.kt          # Auth URL, local redirect server, token exchange
 ├── player/
-│   └── MpvPlayer.kt          # mpv process + IPC socket + queue
+│   └── FFmpegPlayer.kt       # in-process FFmpeg decoder + Java Sound API playback
 └── ui/
     ├── App.kt                # Window, sidebar, navigation
     ├── SearchScreen.kt       # Search UI, sort dropdown, artist rows
@@ -50,7 +51,8 @@ src/main/kotlin/
 ## Requirements
 
 - JDK 21
-- `mpv` installed and available on `$PATH`
+- `yt-dlp` available in PATH (bundled in AppImage, or install via `sudo apt install yt-dlp`)
+- No external media player required — FFmpeg is bundled as a JAR dependency via JavaCV
 
 ## Build
 

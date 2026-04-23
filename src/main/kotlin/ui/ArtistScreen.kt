@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -25,12 +27,12 @@ import api.fetchAlbumTracks
 import api.fetchArtistPage
 import api.resolveStreamUrl
 import kotlinx.coroutines.launch
-import player.MpvPlayer
+import player.FFmpegPlayer
 
 @Composable
 fun ArtistScreen(
     browseId: String,
-    player: MpvPlayer,
+    player: FFmpegPlayer,
     onBack: () -> Unit,
     onArtistClick: (browseId: String, name: String) -> Unit
 ) {
@@ -49,9 +51,20 @@ fun ArtistScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        // Top bar — changes based on whether we're in album view
+        // Top bar
         Row(
-            Modifier.fillMaxWidth().background(Surface).padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier
+                .fillMaxWidth()
+                .background(Background)
+                .drawBehind {
+                    drawLine(
+                        color = PsPearl200,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1f
+                    )
+                }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = {
@@ -73,16 +86,15 @@ fun ArtistScreen(
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Accent)
+                CircularProgressIndicator(color = PsInk900)
             }
             artistData == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Failed to load artist", color = TextSecondary, fontSize = 15.sp)
+                Text("// failed_to_load_artist;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
             }
             selectedAlbum != null -> {
-                // Album track list
                 if (albumLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Accent)
+                        CircularProgressIndicator(color = PsInk900)
                     }
                 } else {
                     LazyColumn(Modifier.fillMaxSize()) {
@@ -94,7 +106,7 @@ fun ArtistScreen(
                             ) {
                                 Thumbnail(
                                     selectedAlbum!!.thumbnailUrl ?: "",
-                                    Modifier.size(80.dp).clip(RoundedCornerShape(6.dp))
+                                    Modifier.size(80.dp).clip(RoundedCornerShape(2.dp))
                                 )
                                 Spacer(Modifier.width(16.dp))
                                 Column {
@@ -116,7 +128,7 @@ fun ArtistScreen(
                         if (albumTracks.isEmpty()) {
                             item {
                                 Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                                    Text("No songs available", color = TextSecondary, fontSize = 14.sp)
+                                    Text("// no_songs_available;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
                                 }
                             }
                         } else {
@@ -130,7 +142,6 @@ fun ArtistScreen(
                 }
             }
             else -> {
-                // Artist overview
                 val data = artistData!!
                 LazyColumn(Modifier.fillMaxSize()) {
                     // Artist header
@@ -139,7 +150,7 @@ fun ArtistScreen(
                             if (data.thumbnailUrl != null) {
                                 Thumbnail(data.thumbnailUrl, Modifier.fillMaxSize())
                             } else {
-                                Box(Modifier.fillMaxSize().background(Surface))
+                                Box(Modifier.fillMaxSize().background(PsPearl100))
                             }
                             Box(
                                 Modifier.fillMaxSize().background(
@@ -161,7 +172,7 @@ fun ArtistScreen(
                     // Top songs
                     if (data.topSongs.isNotEmpty()) {
                         item {
-                            SectionHeader("Popular songs")
+                            SectionHeader("popular songs")
                         }
                         items(data.topSongs.size) { index ->
                             Box(Modifier.padding(horizontal = 16.dp)) {
@@ -170,7 +181,7 @@ fun ArtistScreen(
                         }
                     }
 
-                    // Release sections (Albums, Singles, EPs…)
+                    // Release sections
                     for ((sectionTitle, cards) in data.releaseSections) {
                         item {
                             SectionHeader(sectionTitle)
@@ -206,10 +217,11 @@ fun ArtistScreen(
 @Composable
 private fun SectionHeader(title: String) {
     Text(
-        title,
-        color = TextPrimary,
-        fontSize = 15.sp,
-        fontWeight = FontWeight.SemiBold,
+        title.lowercase() + ";",
+        fontFamily = FontMono,
+        fontSize = 10.sp,
+        letterSpacing = 1.7.sp,
+        color = PsSteel400,
         modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 10.dp)
     )
 }
@@ -219,11 +231,11 @@ private fun AlbumCardItem(album: AlbumCard, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(140.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(0.dp))
             .clickable(onClick = onClick)
             .padding(bottom = 4.dp)
     ) {
-        Thumbnail(album.thumbnailUrl ?: "", Modifier.size(140.dp).clip(RoundedCornerShape(6.dp)))
+        Thumbnail(album.thumbnailUrl ?: "", Modifier.size(140.dp).clip(RoundedCornerShape(2.dp)))
         Spacer(Modifier.height(6.dp))
         Text(
             album.title,

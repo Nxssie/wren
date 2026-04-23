@@ -1,28 +1,29 @@
 package ui
 
 import auth.AuthManager
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.darkColors
+import androidx.compose.material.lightColors
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,21 +34,41 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import player.MpvPlayer
+import player.FFmpegPlayer
 import java.net.URL
 
-val Background = Color(0xFF0F0F0F)
-val Surface = Color(0xFF1C1C1C)
-val Accent = Color(0xFFFF4444)
-val TextPrimary = Color.White
-val TextSecondary = Color(0xFFAAAAAA)
+// PrintStream design tokens
+val PsPaper        = Color(0xFFF4F4F2)
+val PsWhite        = Color(0xFFFFFFFF)
+val PsPearl100     = Color(0xFFEDEDEF)
+val PsPearl200     = Color(0xFFDDDDE1)
+val PsPearl300     = Color(0xFFC3C3C8)
+val PsSteel400     = Color(0xFF8A8A90)
+val PsSteel500     = Color(0xFF5A5A62)
+val PsGraphite600  = Color(0xFF2F2F36)
+val PsGraphite700  = Color(0xFF1A1A1F)
+val PsInk800       = Color(0xFF0D0D11)
+val PsInk900       = Color(0xFF050507)
+val PsIrisCyan     = Color(0xFFB6E8F2)
+val PsSignalOk     = Color(0xFF7FA58A)
+val PsSignalDanger = Color(0xFFD2644D)
+val PsMidGraphite  = Color(0xFF3A3A42)
 
-private val SidebarCollapsed = 64.dp
-private val SidebarExpanded = 220.dp
+// Global dark-mode toggle — mutableStateOf so composables react to it
+var globalDark by mutableStateOf(false)
+
+// Semantic aliases — computed properties so they react to globalDark
+val Background    get() = if (globalDark) PsInk900        else PsPaper
+val Surface       get() = if (globalDark) PsGraphite600   else PsWhite
+val Accent        get() = if (globalDark) PsWhite         else PsInk900
+val TextPrimary   get() = if (globalDark) PsWhite         else PsInk900
+val TextSecondary get() = if (globalDark) PsPearl200      else PsSteel500
+val PsInset       get() = if (globalDark) PsMidGraphite   else PsPearl100
+val FontMono            = FontFamily.Monospace
 
 @Composable
 fun AppWindow(onCloseRequest: () -> Unit) {
-    val player = remember { MpvPlayer() }
+    val player = remember { FFmpegPlayer() }
     var authenticated by remember { mutableStateOf(AuthManager.isAuthenticated) }
     var showAuthDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(0) }
@@ -74,10 +95,14 @@ fun AppWindow(onCloseRequest: () -> Unit) {
         state = WindowState(width = 960.dp, height = 700.dp)
     ) {
         MaterialTheme(
-            colors = darkColors(
-                background = Background,
-                surface = Surface,
-                primary = Accent
+            colors = if (globalDark) darkColors(
+                background = PsInk900, surface = PsGraphite600,
+                primary = PsWhite, onPrimary = PsInk900,
+                onBackground = PsWhite, onSurface = PsWhite
+            ) else lightColors(
+                background = PsPaper, surface = PsWhite,
+                primary = PsInk900, onPrimary = PsWhite,
+                onBackground = PsInk900, onSurface = PsInk900
             )
         ) {
             Column(Modifier.fillMaxSize().background(Background)) {
@@ -103,6 +128,7 @@ fun AppWindow(onCloseRequest: () -> Unit) {
                                 onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                             )
                             selectedTab == 1 -> LibraryScreen(player)
+                            selectedTab == 2 -> NowPlayingScreen(player)
                         }
                     }
                 }
@@ -127,62 +153,119 @@ private fun Sidebar(
     onLoginRequest: () -> Unit,
     onLogout: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(true) }
-    val width by animateDpAsState(
-        targetValue = if (expanded) SidebarExpanded else SidebarCollapsed,
-        animationSpec = tween(200)
-    )
-
     Column(
         modifier = Modifier
-            .width(width)
+            .width(220.dp)
             .fillMaxHeight()
-            .background(Surface),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(PsInk900)
+            .drawBehind {
+                // Right-edge 1px hairline
+                drawLine(
+                    color = Color.Black,
+                    start = Offset(size.width, 0f),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1f
+                )
+            },
+        horizontalAlignment = Alignment.Start
     ) {
-        // Toggle button
+        // Brand header
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
-                .clickable { expanded = !expanded },
-            contentAlignment = if (expanded) Alignment.CenterEnd else Alignment.Center
+                .drawBehind {
+                    // Bottom hairline at 8% white
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.08f),
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1f
+                    )
+                }
+                .padding(horizontal = 20.dp, vertical = 18.dp)
         ) {
-            Icon(
-                imageVector = if (expanded) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
-                contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = TextSecondary,
-                modifier = Modifier.padding(end = if (expanded) 12.dp else 0.dp).size(22.dp)
+            Text(
+                "WREN",
+                color = PsWhite,
+                fontFamily = FontFamily.SansSerif,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                letterSpacing = 2.sp
             )
         }
 
-        Divider(color = Color(0xFF2A2A2A), thickness = 1.dp)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(16.dp))
 
-        // Nav items
+        // Section label
+        Text(
+            "_navigation;",
+            color = PsPearl300.copy(alpha = 0.6f),
+            fontFamily = FontMono,
+            fontSize = 9.sp,
+            letterSpacing = 1.7.sp,
+            modifier = Modifier.padding(start = 20.dp, bottom = 6.dp)
+        )
+
         NavItem(
-            icon = Icons.Default.Search,
-            label = "Search",
+            code = "SCH",
+            label = "search",
             selected = selectedTab == 0,
-            expanded = expanded,
             onClick = { onTabChange(0) }
         )
         NavItem(
-            icon = Icons.Default.LibraryMusic,
-            label = "Library",
+            code = "LIB",
+            label = "library",
             selected = selectedTab == 1,
-            expanded = expanded,
             onClick = { onTabChange(1) }
+        )
+        NavItem(
+            code = "NOW",
+            label = "now playing",
+            selected = selectedTab == 2,
+            onClick = { onTabChange(2) }
         )
 
         Spacer(Modifier.weight(1f))
-        Divider(color = Color(0xFF2A2A2A), thickness = 1.dp)
 
-        // User section
+        // Theme toggle
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { globalDark = !globalDark }
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "_theme;",
+                fontFamily = FontMono, fontSize = 9.sp,
+                letterSpacing = 1.4.sp,
+                color = PsPearl300.copy(alpha = 0.55f)
+            )
+            Text(
+                if (globalDark) "dark;" else "light;",
+                fontFamily = FontMono, fontSize = 9.sp,
+                letterSpacing = 1.4.sp,
+                color = PsPearl300.copy(alpha = 0.55f)
+            )
+        }
+
+        // Footer text
+        Text(
+            "///rev.B;\n_handle_with_care;\n0472-2026",
+            color = PsPearl300.copy(alpha = 0.3f),
+            fontFamily = FontMono,
+            fontSize = 9.sp,
+            lineHeight = 14.sp,
+            modifier = Modifier.padding(start = 20.dp, bottom = 16.dp)
+        )
+
+        Divider(color = Color.White.copy(alpha = 0.08f), thickness = 1.dp)
+
         if (authenticated) {
-            UserSection(expanded = expanded, onLogout = onLogout)
+            UserSection(onLogout = onLogout)
         } else {
-            LoginButton(expanded = expanded, onClick = onLoginRequest)
+            LoginButton(onClick = onLoginRequest)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -191,43 +274,57 @@ private fun Sidebar(
 
 @Composable
 private fun NavItem(
-    icon: ImageVector,
+    code: String,
     label: String,
     selected: Boolean,
-    expanded: Boolean,
     onClick: () -> Unit
 ) {
-    val bg = if (selected) Accent.copy(alpha = 0.12f) else Color.Transparent
-    val tint = if (selected) Accent else TextSecondary
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(bg)
+            .drawBehind {
+                if (selected) {
+                    // Active left 2dp accent rect
+                    drawRect(
+                        color = PsIrisCyan,
+                        topLeft = Offset(0f, 0f),
+                        size = Size(4.dp.toPx(), size.height)
+                    )
+                    // Subtle background
+                    drawRect(
+                        color = Color.White.copy(alpha = 0.06f),
+                        topLeft = Offset(0f, 0f),
+                        size = size
+                    )
+                }
+            }
             .clickable(onClick = onClick)
-            .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
-        if (expanded) {
-            Spacer(Modifier.width(12.dp))
-            Text(
-                label,
-                color = if (selected) TextPrimary else TextSecondary,
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            code,
+            color = if (selected) PsWhite else PsPearl300.copy(alpha = 0.5f),
+            fontFamily = FontMono,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 11.sp,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier.width(32.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            label,
+            color = if (selected) PsWhite else PsPearl300.copy(alpha = 0.5f),
+            fontFamily = FontMono,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
 @Composable
-private fun UserSection(expanded: Boolean, onLogout: () -> Unit) {
+private fun UserSection(onLogout: () -> Unit) {
     var showLogout by remember { mutableStateOf(false) }
     val avatarUrl = remember { AuthManager.avatarUrl }
     val accountName = remember { AuthManager.accountName }
@@ -245,35 +342,40 @@ private fun UserSection(expanded: Boolean, onLogout: () -> Unit) {
     }
 
     Column(Modifier.fillMaxWidth()) {
-        if (expanded && showLogout) {
+        if (showLogout) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
-                    .clip(RoundedCornerShape(8.dp))
                     .clickable { onLogout(); showLogout = false }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Sign out", tint = TextSecondary, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(12.dp))
-                Text("Sign out", color = TextSecondary, fontSize = 13.sp)
+                Icon(
+                    Icons.AutoMirrored.Filled.ExitToApp,
+                    contentDescription = "Sign out",
+                    tint = PsPearl300.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "_sign_out;",
+                    color = PsPearl300.copy(alpha = 0.7f),
+                    fontFamily = FontMono,
+                    fontSize = 11.sp
+                )
             }
         }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(8.dp))
                 .clickable { showLogout = !showLogout }
-                .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Avatar
+            // Square avatar
             Box(
-                Modifier.size(32.dp).clip(CircleShape).background(Color(0xFF333333)),
+                Modifier.size(28.dp).background(PsGraphite600),
                 contentAlignment = Alignment.Center
             ) {
                 if (avatarBitmap != null) {
@@ -284,49 +386,56 @@ private fun UserSection(expanded: Boolean, onLogout: () -> Unit) {
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    Icon(Icons.Default.AccountCircle, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(32.dp))
-                }
-            }
-
-            if (expanded) {
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        accountName ?: "Account",
-                        color = TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    Icon(
+                        Icons.Default.AccountCircle,
+                        contentDescription = null,
+                        tint = PsPearl300,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                Icon(
-                    if (showLogout) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
-                    contentDescription = null,
-                    tint = TextSecondary,
-                    modifier = Modifier.size(18.dp)
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    accountName ?: "account",
+                    color = PsWhite,
+                    fontFamily = FontMono,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
+            Icon(
+                if (showLogout) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                contentDescription = null,
+                tint = PsPearl300.copy(alpha = 0.5f),
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun LoginButton(expanded: Boolean, onClick: () -> Unit) {
+private fun LoginButton(onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.AccountCircle, contentDescription = "Sign in", tint = TextSecondary, modifier = Modifier.size(22.dp))
-        if (expanded) {
-            Spacer(Modifier.width(12.dp))
-            Text("Sign in", color = TextSecondary, fontSize = 13.sp)
-        }
+        Icon(
+            Icons.Default.AccountCircle,
+            contentDescription = "Sign in",
+            tint = PsPearl300.copy(alpha = 0.5f),
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            "_sign_in;",
+            color = PsPearl300.copy(alpha = 0.7f),
+            fontFamily = FontMono,
+            fontSize = 11.sp
+        )
     }
 }
