@@ -293,7 +293,19 @@ class FFmpegPlayer {
                     if (remaining > 0) {
                         val (bytes, len) = bufferToBytes(sampleBuffer)
                         if (len > 0) {
-                            line.write(bytes, 0, len)
+                            val vol = digitalVolume
+                            if (vol >= 1.0f) {
+                                line.write(bytes, 0, len)
+                            } else {
+                                // Apply digital volume gain to S16 samples (little-endian)
+                                for (i in 0 until len step 2) {
+                                    val sample = bytes[i].toInt() or (bytes[i + 1].toInt() shl 8)
+                                    val scaled = (sample * vol).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                                    bytes[i] = scaled.toByte()
+                                    bytes[i + 1] = (scaled shr 8).toByte()
+                                }
+                                line.write(bytes, 0, len)
+                            }
                         }
                     }
                 }
@@ -496,10 +508,16 @@ class FFmpegPlayer {
                         minDb + logRatio * (maxDb - minDb)
                     }
                     gainControl.value = gainDb
+                    return
                 }
             } catch (_: Exception) {
-                // Some mixers don't support volume control
+                // Some mixers don't support MASTER_GAIN, fall through to digital gain
             }
+            // Fallback: digital gain applied in playLoop
+            digitalVolume = vol / 100f
         }
     }
+
+    @Volatile
+    private var digitalVolume: Float = 0.5f
 }
