@@ -51,6 +51,10 @@ class FFmpegPlayer {
     private val grabberLock = Any()
     private val seekLock = Any()
 
+    // Pre-allocated buffers to eliminate per-frame allocations (GC pressure causes stutter)
+    private val shortBuffer = ShortArray(65536)
+    private val byteBuffer = ByteArray(131072)
+
     // Audio playback
     private var audioLine: SourceDataLine? = null
     private val audioLock = Any()
@@ -79,7 +83,7 @@ class FFmpegPlayer {
     fun load(url: String, videoId: String, title: String = "") {
         queue.value = emptyList()
         queueIndex.value = -1
-        loadInternal(url, videoId, title)
+        scope.launch { loadInternal(url, videoId, title) }
     }
 
     fun loadQueue(items: List<QueueItem>, startIndex: Int = 0) {
@@ -133,7 +137,7 @@ class FFmpegPlayer {
             RepeatMode.SINGLE -> {
                 if (q.isNotEmpty()) {
                     val item = q[queueIndex.value]
-                    loadInternal(item.url, item.videoId, item.title)
+                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
                 }
                 return
             }
@@ -141,14 +145,14 @@ class FFmpegPlayer {
                 if (q.size <= 1) {
                     if (q.isNotEmpty()) {
                         val item = q[queueIndex.value]
-                        loadInternal(item.url, item.videoId, item.title)
+                        scope.launch { loadInternal(item.url, item.videoId, item.title) }
                     }
                     return
                 }
                 val idx = (queueIndex.value + 1) % q.size
                 queueIndex.value = idx
                 val item = q[idx]
-                loadInternal(item.url, item.videoId, item.title)
+                scope.launch { loadInternal(item.url, item.videoId, item.title) }
                 prefetchAt(q, (idx + 1) % q.size)
                 return
             }
@@ -158,7 +162,7 @@ class FFmpegPlayer {
         if (idx < q.size) {
             queueIndex.value = idx
             val item = q[idx]
-            loadInternal(item.url, item.videoId, item.title)
+            scope.launch { loadInternal(item.url, item.videoId, item.title) }
             prefetchAt(q, idx + 1)
         }
     }
@@ -169,7 +173,7 @@ class FFmpegPlayer {
         if (idx >= 0) {
             queueIndex.value = idx
             val item = q[idx]
-            loadInternal(item.url, item.videoId, item.title)
+            scope.launch { loadInternal(item.url, item.videoId, item.title) }
             prefetchAt(q, idx - 1)
         }
     }
@@ -182,7 +186,7 @@ class FFmpegPlayer {
             }
     }
 
-    private fun loadInternal(url: String, videoId: String, title: String = "") {
+    private suspend fun loadInternal(url: String, videoId: String, title: String = "") {
         currentTitle.value = videoId
         displayTitle.value = title
         position.value = 0.0
@@ -191,11 +195,9 @@ class FFmpegPlayer {
 
         // Stop any existing playback (waits for old playLoop to fully exit)
         eofReached.set(false)
-        runBlocking { stopPlayback() }
+        stopPlayback()
 
-        val streamUrl = runBlocking {
-            resolveStreamUrl(videoId) ?: url
-        }
+        val streamUrl = resolveStreamUrl(videoId) ?: url
 
         scope.launch {
             try {
@@ -289,16 +291,15 @@ class FFmpegPlayer {
                     val sampleBuffer = frame.samples[0] as java.nio.Buffer
                     val remaining = sampleBuffer.remaining()
                     if (remaining > 0) {
-                        // Convert any Buffer type to byte[] for SourceDataLine.write()
-                        val bytes = bufferToBytes(sampleBuffer)
-                        if (bytes.isNotEmpty()) {
-                            line.write(bytes, 0, bytes.size)
+                        val (bytes, len) = bufferToBytes(sampleBuffer)
+                        if (len > 0) {
+                            line.write(bytes, 0, len)
                         }
                     }
                 }
             } catch (e: Exception) {
                 if (isPlayingInternal.get()) {
-                    delay(100)
+                    delay(10)
                 }
             }
         }
@@ -312,58 +313,75 @@ class FFmpegPlayer {
         // Auto-advance on EOF (only if not manually stopped)
         if (eofReached.get()) {
             scope.launch {
+                val q = queue.value
                 when (repeatMode.value) {
                     RepeatMode.SINGLE -> {
-                        if (queue.value.isNotEmpty()) {
-                            val item = queue.value[queueIndex.value]
+                        if (q.isNotEmpty()) {
+                            val item = q[queueIndex.value]
                             loadInternal(item.url, item.videoId, item.title)
                         }
                     }
-                    else -> next()
+                    else -> {
+                        val nextIdx = queueIndex.value + 1
+                        if (nextIdx < q.size) {
+                            queueIndex.value = nextIdx
+                            val item = q[nextIdx]
+                            scope.launch { resolveStreamUrl(item.videoId) }
+                            loadInternal(item.url, item.videoId, item.title)
+                        } else if (repeatMode.value == RepeatMode.ALL && q.isNotEmpty()) {
+                            queueIndex.value = 0
+                            val item = q[0]
+                            scope.launch { resolveStreamUrl(item.videoId) }
+                            loadInternal(item.url, item.videoId, item.title)
+                        }
+                    }
                 }
             }
         }
     }
 
-    /** Convert any NIO Buffer to a byte array for SourceDataLine.write() */
-    private fun bufferToBytes(buf: java.nio.Buffer): ByteArray {
+    /** Convert any NIO Buffer to bytes using pre-allocated buffers (zero allocation) */
+    private fun bufferToBytes(buf: java.nio.Buffer): Pair<ByteArray, Int> {
         return when (buf) {
             is ShortBuffer -> {
-                val shorts = ShortArray(buf.remaining())
-                buf.get(shorts)
-                shortsToBytes(shorts)
+                val count = buf.remaining().coerceAtMost(shortBuffer.size)
+                buf.get(shortBuffer, 0, count)
+                val len = shortsToBytes(shortBuffer, 0, count, byteBuffer, 0)
+                byteBuffer to len
             }
             is ByteBuffer -> {
-                val bytes = ByteArray(buf.remaining())
-                buf.get(bytes)
-                bytes
+                val count = buf.remaining().coerceAtMost(byteBuffer.size)
+                buf.get(byteBuffer, 0, count)
+                byteBuffer to count
             }
             is java.nio.FloatBuffer -> {
-                val shorts = ShortArray(buf.remaining())
-                for (i in 0 until shorts.size) {
-                    shorts[i] = (buf.get(i) * 32767f).toInt()
+                val count = buf.remaining().coerceAtMost(shortBuffer.size)
+                for (i in 0 until count) {
+                    shortBuffer[i] = (buf.get(i) * 32767f).toInt()
                         .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
                 }
-                shortsToBytes(shorts)
+                val len = shortsToBytes(shortBuffer, 0, count, byteBuffer, 0)
+                byteBuffer to len
             }
             is java.nio.IntBuffer -> {
-                val shorts = ShortArray(buf.remaining())
-                for (i in 0 until shorts.size) {
-                    shorts[i] = (buf.get(i) shr 16).toShort()
+                val count = buf.remaining().coerceAtMost(shortBuffer.size)
+                for (i in 0 until count) {
+                    shortBuffer[i] = (buf.get(i) shr 16).toShort()
                 }
-                shortsToBytes(shorts)
+                val len = shortsToBytes(shortBuffer, 0, count, byteBuffer, 0)
+                byteBuffer to len
             }
-            else -> ByteArray(0)
+            else -> byteBuffer to 0
         }
     }
 
-    private fun shortsToBytes(shorts: ShortArray): ByteArray {
-        val bytes = ByteArray(shorts.size * 2)
-        for (i in shorts.indices) {
-            bytes[i * 2] = (shorts[i].toInt() and 0xFF).toByte()
-            bytes[i * 2 + 1] = ((shorts[i].toInt() shr 8) and 0xFF).toByte()
+    private fun shortsToBytes(shorts: ShortArray, sOff: Int, count: Int,
+                             bytes: ByteArray, bOff: Int): Int {
+        for (i in 0 until count) {
+            bytes[bOff + i * 2] = (shorts[sOff + i].toInt() and 0xFF).toByte()
+            bytes[bOff + i * 2 + 1] = ((shorts[sOff + i].toInt() shr 8) and 0xFF).toByte()
         }
-        return bytes
+        return count * 2
     }
 
     private fun openMixer(grabber: FFmpegFrameGrabber): SourceDataLine {
