@@ -476,14 +476,25 @@ class FFmpegPlayer {
 
     fun setVolume(vol: Int) {
         volume.value = vol
-        // Apply via FloatControl if available
+        // Apply via FloatControl with logarithmic curve for natural volume perception
         synchronized(audioLock) {
             val line = audioLine ?: return
             try {
                 val gainControl = line.getControl(FloatControl.Type.MASTER_GAIN) as? FloatControl
                 if (gainControl != null) {
-                    // Map 0-100 to -60dB..0dB
-                    val gainDb = -60f + (vol / 100f) * 60f
+                    // Logarithmic mapping: human hearing is logarithmic
+                    // At vol=0, gain=min dB (silent). At vol=100, gain=max dB (0dB).
+                    // Using log curve so small changes at low volume are perceptible.
+                    val minDb = gainControl.minimum
+                    val maxDb = gainControl.maximum
+                    val gainDb = if (vol <= 0) {
+                        minDb
+                    } else {
+                        val ratio = vol / 100f
+                        // log10(0.0001) = -4, maps ratio 0..1 to -40..0 dB, then scale to range
+                        val logRatio = kotlin.math.log10(0.0001f + ratio * 0.9999f) / 4f
+                        minDb + logRatio * (maxDb - minDb)
+                    }
                     gainControl.value = gainDb
                 }
             } catch (_: Exception) {

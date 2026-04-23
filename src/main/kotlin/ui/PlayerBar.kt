@@ -244,23 +244,32 @@ fun PlayerBar(player: FFmpegPlayer) {
                                 modifier = Modifier.size(18.dp)
                             )
                         }
-                        Slider(
-                            value = if (isMuted) 0f else volume.toFloat(),
-                            onValueChange = {
-                                val newVol = it.toInt()
-                                player.setVolume(newVol)
-                                if (newVol > 0 && isMuted) {
-                                    isMuted = false
-                                }
-                            },
-                            valueRange = 0f..100f,
-                            colors = SliderDefaults.colors(
-                                thumbColor = Accent,
-                                activeTrackColor = Accent,
-                                inactiveTrackColor = PsInset
-                            ),
-                            modifier = Modifier.width(80.dp)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Slider(
+                                value = if (isMuted) 0f else volume.toFloat(),
+                                onValueChange = {
+                                    val newVol = it.toInt()
+                                    player.setVolume(newVol)
+                                    if (newVol > 0 && isMuted) {
+                                        isMuted = false
+                                    }
+                                },
+                                valueRange = 0f..100f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Accent,
+                                    activeTrackColor = Accent,
+                                    inactiveTrackColor = PsInset
+                                ),
+                                modifier = Modifier.width(80.dp)
+                            )
+                            Text(
+                                text = if (isMuted || volume <= 0) "0%" else "${volume}%",
+                                color = TextSecondary.copy(alpha = 0.5f),
+                                fontSize = 10.sp,
+                                fontFamily = FontMono,
+                                modifier = Modifier.width(28.dp)
+                            )
+                        }
                     }
                 }
             }
