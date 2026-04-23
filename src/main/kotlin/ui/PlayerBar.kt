@@ -260,7 +260,7 @@ fun PlayerBar(player: FFmpegPlayer) {
                                     activeTrackColor = Accent,
                                     inactiveTrackColor = PsInset
                                 ),
-                                modifier = Modifier.width(80.dp)
+                                modifier = Modifier.width(120.dp)
                             )
                             Text(
                                 text = if (isMuted || volume <= 0) "0%" else "${volume}%",
