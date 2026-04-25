@@ -30,10 +30,21 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR"
 cp -r "$DIST_DIR"/. "$APP_DIR/"
 
+# Bundle yt-dlp (required for stream URL resolution)
+YT_DLP_BIN=$(which yt-dlp 2>/dev/null || echo "")
+if [ -n "$YT_DLP_BIN" ]; then
+    echo ">>> Bundling yt-dlp from $YT_DLP_BIN..."
+    cp "$YT_DLP_BIN" "$APP_DIR/bin/yt-dlp"
+    chmod +x "$APP_DIR/bin/yt-dlp"
+else
+    echo ">>> WARNING: yt-dlp not found in PATH — stream URL resolution will fail at runtime"
+fi
+
 # AppRun — entry point
 cat > "$APP_DIR/AppRun" << 'EOF'
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "$0")")"
+export PATH="$HERE/bin:$PATH"
 exec "$HERE/bin/wren" "$@"
 EOF
 chmod +x "$APP_DIR/AppRun"

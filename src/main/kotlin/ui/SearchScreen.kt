@@ -7,7 +7,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -21,6 +20,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -38,7 +40,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import player.MpvPlayer
+import player.FFmpegPlayer
 import player.QueueItem
 import java.net.URL
 
@@ -68,7 +70,7 @@ private fun parseDurationToSeconds(duration: String): Int {
 }
 
 @Composable
-fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: String) -> Unit) {
+fun SearchScreen(player: FFmpegPlayer, onArtistClick: (browseId: String, name: String) -> Unit) {
     var query by remember { mutableStateOf("") }
     var rawResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     var artistResults by remember { mutableStateOf<List<ArtistResult>>(emptyList()) }
@@ -101,25 +103,27 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Search songs, artists...", color = TextSecondary) },
+                placeholder = { Text("_search_modules;", color = PsSteel400, fontFamily = FontMono, fontSize = 13.sp) },
                 singleLine = true,
+                shape = RoundedCornerShape(0.dp),
                 modifier = Modifier.weight(1f).onKeyEvent { e ->
                     if (e.key == Key.Enter && e.type == KeyEventType.KeyUp) { doSearch(); true } else false
                 },
                 colors = TextFieldDefaults.outlinedTextFieldColors(
                     textColor = TextPrimary,
-                    cursorColor = Accent,
-                    focusedBorderColor = Accent,
-                    unfocusedBorderColor = Color(0xFF333333),
-                    backgroundColor = Surface
+                    cursorColor = TextPrimary,
+                    focusedBorderColor = TextPrimary,
+                    unfocusedBorderColor = PsPearl200,
+                    backgroundColor = Surface,
+                    placeholderColor = PsSteel400
                 )
             )
             Spacer(Modifier.width(12.dp))
             IconButton(
                 onClick = { doSearch() },
-                modifier = Modifier.size(50.dp).background(Accent, CircleShape)
+                modifier = Modifier.size(50.dp).background(PsInk900)
             ) {
-                Icon(Icons.Default.Search, contentDescription = "Search", tint = Color.White)
+                Icon(Icons.Default.Search, contentDescription = "Search", tint = PsWhite)
             }
         }
 
@@ -131,16 +135,19 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
                 Box {
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Surface)
+                            .background(PsInset)
                             .clickable { sortExpanded = true }
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(sortOrder.label, color = TextPrimary, fontSize = 12.sp)
                         Spacer(Modifier.width(4.dp))
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = null,
-                            tint = TextSecondary, modifier = Modifier.size(16.dp))
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = null,
+                            tint = PsSteel500,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                     DropdownMenu(
                         expanded = sortExpanded,
@@ -151,7 +158,7 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
                             DropdownMenuItem(onClick = { sortOrder = option; sortExpanded = false }) {
                                 Text(
                                     option.label,
-                                    color = if (option == sortOrder) Accent else TextPrimary,
+                                    color = if (option == sortOrder) TextPrimary else TextSecondary,
                                     fontSize = 13.sp
                                 )
                             }
@@ -165,19 +172,20 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Accent)
+                CircularProgressIndicator(color = PsInk900)
             }
             results.isEmpty() && artistResults.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Search for music to get started", color = TextSecondary, fontSize = 15.sp)
+                Text("// no_results_yet;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
             }
-            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 if (artistResults.isNotEmpty()) {
                     item {
                         Text(
-                            "Artists",
-                            color = TextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            "artists;",
+                            color = PsSteel400,
+                            fontFamily = FontMono,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.7.sp,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                         )
                     }
@@ -188,8 +196,9 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
                     if (artistResults.size > 3) {
                         item {
                             Text(
-                                if (showAllArtists) "Show less" else "See all ${artistResults.size} artists",
-                                color = Accent,
+                                if (showAllArtists) "// show_less;" else "// see_all_${artistResults.size}_artists;",
+                                color = PsSteel500,
+                                fontFamily = FontMono,
                                 fontSize = 12.sp,
                                 modifier = Modifier
                                     .clickable { showAllArtists = !showAllArtists }
@@ -199,7 +208,7 @@ fun SearchScreen(player: MpvPlayer, onArtistClick: (browseId: String, name: Stri
                     }
                     item {
                         Divider(
-                            color = Color(0xFF2A2A2A),
+                            color = PsPearl200,
                             modifier = Modifier.padding(vertical = 10.dp)
                         )
                     }
@@ -217,30 +226,53 @@ fun TrackRow(
     result: SearchResult,
     index: Int,
     results: List<SearchResult>,
-    player: MpvPlayer,
+    player: FFmpegPlayer,
     onArtistClick: ((browseId: String, name: String) -> Unit)?
 ) {
     val currentTitle by player.currentTitle
+    val isEnqueuing by player.isEnqueuing
     val active = currentTitle == result.videoId
+    val enqueuing = isEnqueuing && active
     val canNavigateArtist = onArtistClick != null && result.artistId != null
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (active) Surface else Color.Transparent)
-            .clickable {
-                player.loadQueue(results.map { QueueItem(it.url, it.videoId, it.title) }, index)
+            .drawBehind {
+                if (active) {
+                    // Active left 2dp cyan rect
+                    drawRect(
+                        color = PsIrisCyan,
+                        topLeft = Offset(0f, 0f),
+                        size = Size(4.dp.toPx(), size.height)
+                    )
+                    drawRect(
+                        color = PsInset,
+                        topLeft = Offset(0f, 0f),
+                        size = size
+                    )
+                }
+                // Bottom hairline
+                drawLine(
+                    color = PsPearl200,
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1f
+                )
+            }
+            .background(Color.Transparent)
+            .clickable(enabled = !enqueuing) {
+                player.loadQueue(results.map { QueueItem(it.url, it.videoId, it.title, it.artist) }, index)
             }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Thumbnail(result.thumbnailUrl, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
+        Thumbnail(result.thumbnailUrl, Modifier.size(48.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 result.title,
-                color = if (active) Accent else TextPrimary,
+                color = TextPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
@@ -248,7 +280,7 @@ fun TrackRow(
             )
             Text(
                 result.artist,
-                color = if (canNavigateArtist) Accent.copy(alpha = 0.75f) else TextSecondary,
+                color = TextSecondary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -259,14 +291,22 @@ fun TrackRow(
             )
         }
         Spacer(Modifier.width(16.dp))
-        Text(result.duration, color = TextSecondary, fontSize = 12.sp)
+        Text(result.duration, color = PsSteel400, fontSize = 12.sp)
         Spacer(Modifier.width(10.dp))
-        Icon(
-            imageVector = if (result.source == Source.YT_MUSIC) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
-            contentDescription = if (result.source == Source.YT_MUSIC) "YouTube Music" else "YouTube",
-            tint = if (result.source == Source.YT_MUSIC) Color(0xFFFF0000) else Color(0xFFFF6D00),
-            modifier = Modifier.size(14.dp)
-        )
+        if (enqueuing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = Accent,
+                strokeWidth = 1.5.dp
+            )
+        } else {
+            Icon(
+                imageVector = if (result.source == Source.YT_MUSIC) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
+                contentDescription = if (result.source == Source.YT_MUSIC) "YouTube Music" else "YouTube",
+                tint = PsSteel400,
+                modifier = Modifier.size(14.dp)
+            )
+        }
     }
 }
 
@@ -275,14 +315,22 @@ fun ArtistRow(artist: ArtistResult, onArtistClick: (browseId: String, name: Stri
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
+            .drawBehind {
+                // Bottom hairline
+                drawLine(
+                    color = PsPearl200,
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1f
+                )
+            }
             .clickable { onArtistClick(artist.browseId, artist.name) }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Thumbnail(
             artist.thumbnailUrl ?: "",
-            Modifier.size(48.dp).clip(androidx.compose.foundation.shape.CircleShape)
+            Modifier.size(48.dp)
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -309,7 +357,7 @@ fun ArtistRow(artist: ArtistResult, onArtistClick: (browseId: String, name: Stri
         Icon(
             Icons.Default.MusicNote,
             contentDescription = "Artist",
-            tint = Color(0xFFFF0000),
+            tint = PsSteel400,
             modifier = Modifier.size(14.dp)
         )
     }
@@ -330,7 +378,7 @@ fun Thumbnail(url: String, modifier: Modifier) {
         }
     }
 
-    Box(modifier.background(Surface)) {
+    Box(modifier.background(PsPearl100)) {
         if (bitmap != null) {
             Image(
                 bitmap = bitmap!!,

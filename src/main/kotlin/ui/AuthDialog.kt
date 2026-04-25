@@ -12,7 +12,6 @@ import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -53,7 +52,7 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
         Column(
             modifier = Modifier
                 .width(400.dp)
-                .background(Surface, RoundedCornerShape(16.dp))
+                .background(Surface, RoundedCornerShape(0.dp))
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -61,18 +60,18 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             when {
                 error != null -> {
-                    Text(error!!, color = Color(0xFFFF6B6B), fontSize = 13.sp, textAlign = TextAlign.Center)
+                    Text(error!!, color = PsSignalDanger, fontSize = 13.sp, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(20.dp))
                     Button(
                         onClick = { onDismiss() },
-                        colors = ButtonDefaults.buttonColors(backgroundColor = Surface),
-                        shape = RoundedCornerShape(8.dp)
+                        colors = ButtonDefaults.buttonColors(backgroundColor = PsInset),
+                        shape = RoundedCornerShape(0.dp)
                     ) {
                         Text("Close", color = TextSecondary, fontSize = 14.sp)
                     }
                 }
                 authUrl == null -> {
-                    CircularProgressIndicator(color = Accent, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
+                    CircularProgressIndicator(color = PsInk900, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
                     Spacer(Modifier.height(16.dp))
                     Text("Preparing authorization link...", color = TextSecondary, fontSize = 13.sp)
                 }
@@ -86,11 +85,11 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
                         onClick = { openInBrowser(authUrl!!) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Open link again", color = Accent, fontSize = 13.sp)
+                        Text("Open link again", color = TextPrimary, fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(color = Accent, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(color = PsInk900, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
                         Text("Waiting for authorization...", color = TextSecondary, fontSize = 13.sp)
                     }
@@ -110,7 +109,7 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
         Column(
             modifier = Modifier
                 .width(420.dp)
-                .background(Surface, RoundedCornerShape(16.dp))
+                .background(Surface, RoundedCornerShape(0.dp))
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -123,7 +122,8 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             Text(
                 "~/.config/wren/oauth.json",
-                color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium
+                color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                fontFamily = FontMono
             )
             Spacer(Modifier.height(16.dp))
             Text(
@@ -136,16 +136,18 @@ private fun CredentialsSetupDialog(onDismiss: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             Text(
                 "{\n  \"client_id\": \"…\",\n  \"client_secret\": \"…\"\n}",
-                color = TextPrimary, fontSize = 11.sp,
+                color = TextPrimary,
+                fontSize = 11.sp,
+                fontFamily = FontMono,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF0F0F0F), RoundedCornerShape(6.dp))
+                    .background(PsInset, RoundedCornerShape(0.dp))
                     .padding(12.dp)
             )
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { openInBrowser("https://console.cloud.google.com/apis/credentials") }) {
-                    Text("Open Cloud Console", color = Accent, fontSize = 13.sp)
+                    Text("Open Cloud Console", color = TextPrimary, fontSize = 13.sp)
                 }
                 TextButton(onClick = onDismiss) {
                     Text("Close", color = TextSecondary, fontSize = 13.sp)
