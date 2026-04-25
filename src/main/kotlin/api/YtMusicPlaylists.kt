@@ -224,7 +224,7 @@ suspend fun fetchViewCounts(videoIds: List<String>): Map<String, Long> = withCon
     } ?: emptyMap()
 }
 
-private fun parseIsoDuration(iso: String): String {
+internal fun parseIsoDuration(iso: String): String {
     val h = Regex("(\\d+)H").find(iso)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     val m = Regex("(\\d+)M").find(iso)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     val s = Regex("(\\d+)S").find(iso)?.groupValues?.get(1)?.toIntOrNull() ?: 0
