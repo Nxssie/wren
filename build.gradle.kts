@@ -39,7 +39,7 @@ compose.desktop {
     application {
         mainClass = "MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Deb, TargetFormat.Rpm)
+            targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
             packageName = "wren"
             packageVersion = "1.0.0"
             modules("java.net.http")
