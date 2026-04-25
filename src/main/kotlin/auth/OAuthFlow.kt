@@ -9,6 +9,9 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.security.MessageDigest
+import java.util.Base64
+import java.util.Random
 
 private val httpClient: HttpClient = HttpClient.newHttpClient()
 private val json = Json { ignoreUnknownKeys = true }
@@ -27,6 +30,41 @@ data class OAuthTokens(
     val expiresAt: Long
 )
 
+data class AuthState(
+    val authUrl: String,
+    val codeVerifier: String
+)
+
+private val random = Random()
+
+fun generateCodeVerifier(): String {
+    val bytes = ByteArray(64)
+    random.nextBytes(bytes)
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}
+
+fun computeCodeChallenge(verifier: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hash = digest.digest(verifier.toByteArray(Charsets.UTF_8))
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(hash)
+}
+
+fun buildAuthUrl(clientId: String): AuthState {
+    val codeVerifier = generateCodeVerifier()
+    val codeChallenge = computeCodeChallenge(codeVerifier)
+    val url =
+        "https://accounts.google.com/o/oauth2/v2/auth" +
+        "?client_id=$clientId" +
+        "&redirect_uri=${encode(REDIRECT_URI)}" +
+        "&response_type=code" +
+        "&scope=${encode(SCOPE)}" +
+        "&access_type=offline" +
+        "&prompt=consent" +
+        "&code_challenge=${encode(codeChallenge)}" +
+        "&code_challenge_method=S256"
+    return AuthState(url, codeVerifier)
+}
+
 fun loadCredentials(): OAuthCredentials? = runCatching {
     if (!credentialsFile.exists()) return null
     val root = json.parseToJsonElement(credentialsFile.readText()).jsonObject
@@ -36,15 +74,6 @@ fun loadCredentials(): OAuthCredentials? = runCatching {
         clientSecret = obj["client_secret"]?.jsonPrimitive?.content ?: return null
     )
 }.getOrNull()
-
-fun buildAuthUrl(clientId: String): String =
-    "https://accounts.google.com/o/oauth2/v2/auth" +
-    "?client_id=$clientId" +
-    "&redirect_uri=${encode(REDIRECT_URI)}" +
-    "&response_type=code" +
-    "&scope=${encode(SCOPE)}" +
-    "&access_type=offline" +
-    "&prompt=consent"
 
 suspend fun waitForAuthCode(): String = withContext(Dispatchers.IO) {
     ServerSocket().use { server ->
@@ -67,12 +96,13 @@ suspend fun waitForAuthCode(): String = withContext(Dispatchers.IO) {
     }
 }
 
-suspend fun exchangeCode(code: String, creds: OAuthCredentials): OAuthTokens = withContext(Dispatchers.IO) {
+suspend fun exchangeCode(code: String, creds: OAuthCredentials, codeVerifier: String): OAuthTokens = withContext(Dispatchers.IO) {
     val body = "code=${encode(code)}" +
         "&client_id=${creds.clientId}" +
         "&client_secret=${creds.clientSecret}" +
         "&redirect_uri=${encode(REDIRECT_URI)}" +
-        "&grant_type=authorization_code"
+        "&grant_type=authorization_code" +
+        "&code_verifier=${encode(codeVerifier)}"
     val response = post("https://oauth2.googleapis.com/token", body)
     val obj = json.parseToJsonElement(response).jsonObject
     obj["error"]?.jsonPrimitive?.content?.let { err ->

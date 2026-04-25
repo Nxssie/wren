@@ -23,6 +23,12 @@ dependencies {
     implementation("org.bytedeco:javacv:1.5.11")
     implementation("org.bytedeco:ffmpeg:7.1-1.5.11")
     implementation("org.bytedeco:ffmpeg:7.1-1.5.11:linux-x86_64")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 kotlin {
