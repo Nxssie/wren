@@ -44,7 +44,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Build ${{ matrix.name }} distributable
         run: ./gradlew package${{ matrix.format }}
+      - name: Rename artifact
+        run: |
+          cd build/compose/binaries/main
+          case "${{ matrix.format }}" in
+            Deb) ;; # wren_*.deb is already correct Debian convention
+            Msi) mv wren-*.msi Wren-*.msi ;;
+            Dmg) mv wren-*.dmg Wren-*.dmg ;;
+          esac
       - uses: actions/upload-artifact@v6
         with:
           name: wren-${{ matrix.name }}
-          path: build/compose/binaries/main/*
+          path: |
+            build/compose/binaries/main/Wren-*,build/compose/binaries/main/wren_*

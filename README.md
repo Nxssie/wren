@@ -9,7 +9,9 @@ A native Linux music player built with Kotlin and Compose Desktop. Searches and 
 - Queue playback with automatic prefetching of upcoming tracks
 - Google OAuth login to access your YouTube Music playlists and library
 - Popularity-based artist sorting using monthly listener counts parsed directly from the YTMusic API
-- Collapsible sidebar, persistent player bar with seek, volume, and queue controls
+- Now Playing screen with synced/plain lyrics (from [lrclib.net](https://lrclib.net)) and resizable queue panel
+- Dark/light theme toggle in the sidebar
+- Persistent player bar with seek, volume, and queue controls
 - Stream URL resolution via `yt-dlp` (bundled in AppImage, or available in PATH)
 - 4-hour stream URL cache to avoid redundant requests
 
@@ -21,7 +23,7 @@ A native Linux music player built with Kotlin and Compose Desktop. Searches and 
 - **Stream resolution**: `yt-dlp` (for reliable YouTube stream URL extraction)
 - **Concurrency**: Kotlin coroutines (`async`/`coroutineScope` for parallel API calls)
 - **Serialization**: `kotlinx.serialization`
-- **Auth**: OAuth 2.0 with PKCE-style local redirect, implemented from scratch without third-party auth libraries
+- **Auth**: OAuth 2.0 with PKCE (S256) local redirect, implemented from scratch without third-party auth libraries
 
 ## Architecture
 
@@ -33,7 +35,9 @@ src/main/kotlin/
 │   ├── YtMusicArtist.kt      # Artist page + album track parsing
 │   ├── YtMusicPlaylists.kt   # YouTube Data API v3 (playlists, view counts)
 │   ├── YtMusicStream.kt      # Stream URL resolution + cache
-│   └── YtSearch.kt           # YouTube (non-Music) video search
+│   ├── YtSearch.kt           # YouTube (non-Music) video search
+│   ├── Lyrics.kt             # Synced/plain lyrics from lrclib.net
+│   └── ApiKeyManager.kt      # API key management with config file fallback
 ├── auth/
 │   ├── AuthManager.kt        # Token lifecycle, yt-dlp cache sync
 │   └── OAuthFlow.kt          # Auth URL, local redirect server, token exchange
@@ -44,6 +48,7 @@ src/main/kotlin/
     ├── SearchScreen.kt       # Search UI, sort dropdown, artist rows
     ├── ArtistScreen.kt       # Artist page UI
     ├── LibraryScreen.kt      # Playlist library
+    ├── NowPlayingScreen.kt   # Now Playing with lyrics + queue
     ├── PlayerBar.kt          # Persistent playback controls
     └── AuthDialog.kt         # OAuth login dialog
 ```
@@ -93,6 +98,19 @@ To enable login, create an OAuth 2.0 client ID in the [Google Cloud Console](htt
 ```
 
 Tokens are stored at `~/.config/wren/tokens.json` and refreshed automatically.
+
+### API Keys (optional)
+
+Wren ships with default API keys for YouTube Search and InnerTube. To use your own keys, create `~/.config/wren/api.json`:
+
+```json
+{
+  "youtubeApiKey": "YOUR_YOUTUBE_DATA_API_KEY",
+  "innerTubeApiKey": "YOUR_INNERTUBE_KEY"
+}
+```
+
+Keys in this file override the built-in defaults.
 
 ## Notes
 
