@@ -5,7 +5,6 @@ import api.warmupStreamConnection
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.*
-import org.bytedeco.ffmpeg.global.avutil
 import org.bytedeco.javacv.FFmpegFrameGrabber
 import java.nio.ByteBuffer
 import java.nio.ShortBuffer
@@ -208,7 +207,7 @@ class FFmpegPlayer {
                 // Create and configure grabber
                 val newGrabber = FFmpegFrameGrabber(streamUrl)
                 newGrabber.setAudioChannels(2)
-                newGrabber.setPixelFormat(avutil.AV_SAMPLE_FMT_S16)
+                newGrabber.setOption("sample_fmt", "s16")
                 newGrabber.setOption("re", "1")
                 newGrabber.setOption("timeout", "30000000")
 
@@ -302,18 +301,15 @@ class FFmpegPlayer {
                         val (bytes, len) = bufferToBytes(sampleBuffer)
                         if (len > 0) {
                             val vol = digitalVolume
-                            if (vol >= 1.0f) {
-                                line.write(bytes, 0, len)
-                            } else {
-                                // Apply digital volume gain to S16 samples (little-endian)
+                            if (vol < 1.0f) {
                                 for (i in 0 until len step 2) {
-                                    val sample = bytes[i].toInt() or (bytes[i + 1].toInt() shl 8)
-                                    val scaled = (sample * vol).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-                                    bytes[i] = scaled.toByte()
-                                    bytes[i + 1] = (scaled shr 8).toByte()
+                                    val sample = ((bytes[i].toInt() and 0xFF) or ((bytes[i + 1].toInt() and 0xFF) shl 8)).toShort()
+                                    val scaled = (sample.toFloat() * vol).coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat())
+                                    bytes[i] = scaled.toInt().toByte()
+                                    bytes[i + 1] = (scaled.toInt() ushr 8).toByte()
                                 }
-                                line.write(bytes, 0, len)
                             }
+                            line.write(bytes, 0, len)
                         }
                     }
                 }
@@ -496,36 +492,9 @@ class FFmpegPlayer {
 
     fun setVolume(vol: Int) {
         volume.value = vol
-        // Apply via FloatControl with logarithmic curve for natural volume perception
-        synchronized(audioLock) {
-            val line = audioLine ?: return
-            try {
-                val gainControl = line.getControl(FloatControl.Type.MASTER_GAIN) as? FloatControl
-                if (gainControl != null) {
-                    // Logarithmic mapping: human hearing is logarithmic
-                    // At vol=0, gain=min dB (silent). At vol=100, gain=max dB (0dB).
-                    // Using log curve so small changes at low volume are perceptible.
-                    val minDb = gainControl.minimum
-                    val maxDb = gainControl.maximum
-                    val gainDb = if (vol <= 0) {
-                        minDb
-                    } else {
-                        val ratio = vol / 100f
-                        // log10(0.0001) = -4, maps ratio 0..1 to -40..0 dB, then scale to range
-                        val logRatio = kotlin.math.log10(0.0001f + ratio * 0.9999f) / 4f
-                        minDb + logRatio * (maxDb - minDb)
-                    }
-                    gainControl.value = gainDb
-                    return
-                }
-            } catch (_: Exception) {
-                // Some mixers don't support MASTER_GAIN, fall through to digital gain
-            }
-            // Fallback: digital gain applied in playLoop
-            digitalVolume = vol / 100f
-        }
+        digitalVolume = vol / 100f
     }
 
     @Volatile
-    private var digitalVolume: Float = 0.5f
+    private var digitalVolume: Float = 1.0f
 }

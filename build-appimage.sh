@@ -60,8 +60,8 @@ Categories=AudioVideo;Music;
 EOF
 
 # Icon — use provided one or generate a placeholder
-if [ -f "icon.png" ]; then
-    cp icon.png "$APP_DIR/${APP_NAME}.png"
+if [ -f "wren.png" ]; then
+    cp wren.png "$APP_DIR/${APP_NAME}.png"
 else
     echo ">>> No icon.png found, generating placeholder..."
     # Try to generate with ImageMagick, fall back to a minimal PNG
