@@ -31,16 +31,18 @@ fun AuthDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
     }
 
     var authUrl by remember { mutableStateOf<String?>(null) }
+    var codeVerifier by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         runCatching {
             val creds = loadCredentials()!!
-            val url = buildAuthUrl(creds.clientId)
-            authUrl = url
-            openInBrowser(url)
-            val code = waitForAuthCode()
-            val tokens = exchangeCode(code, creds)
+            val authState = buildAuthUrl(creds.clientId)
+            authUrl = authState.authUrl
+            codeVerifier = authState.codeVerifier
+            openInBrowser(authState.authUrl)
+            val authCode = waitForAuthCode()
+            val tokens = exchangeCode(authCode, creds, codeVerifier!!)
             AuthManager.saveTokens(tokens)
             onSuccess()
         }.onFailure {
