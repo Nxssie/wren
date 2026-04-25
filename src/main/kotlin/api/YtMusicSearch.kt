@@ -234,7 +234,7 @@ private fun parseArtistResults(body: String): List<ArtistResult> {
 
 // Parses YTMusic listener/subscriber strings like "750 K usuarios mensuales",
 // "4,03 M usuarios mensuales", "945 suscriptores" → Long (or null if unrecognised).
-private fun parseListenerCount(text: String): Long? {
+internal fun parseListenerCount(text: String): Long? {
     val normalized = text.trim().replace(",", ".")
     val mMatch = Regex("""^([\d.]+)\s*[Mm]""").find(normalized)
     if (mMatch != null) return (mMatch.groupValues[1].toDoubleOrNull()?.times(1_000_000))?.toLong()

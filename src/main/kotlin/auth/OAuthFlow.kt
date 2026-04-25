@@ -38,7 +38,7 @@ data class AuthState(
 private val random = Random()
 
 fun generateCodeVerifier(): String {
-    val bytes = ByteArray(96)
+    val bytes = ByteArray(64)
     random.nextBytes(bytes)
     return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 }
