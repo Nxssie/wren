@@ -230,7 +230,9 @@ fun TrackRow(
     onArtistClick: ((browseId: String, name: String) -> Unit)?
 ) {
     val currentTitle by player.currentTitle
+    val isEnqueuing by player.isEnqueuing
     val active = currentTitle == result.videoId
+    val enqueuing = isEnqueuing && active
     val canNavigateArtist = onArtistClick != null && result.artistId != null
 
     Row(
@@ -259,7 +261,7 @@ fun TrackRow(
                 )
             }
             .background(Color.Transparent)
-            .clickable {
+            .clickable(enabled = !enqueuing) {
                 player.loadQueue(results.map { QueueItem(it.url, it.videoId, it.title, it.artist) }, index)
             }
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -291,12 +293,20 @@ fun TrackRow(
         Spacer(Modifier.width(16.dp))
         Text(result.duration, color = PsSteel400, fontSize = 12.sp)
         Spacer(Modifier.width(10.dp))
-        Icon(
-            imageVector = if (result.source == Source.YT_MUSIC) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
-            contentDescription = if (result.source == Source.YT_MUSIC) "YouTube Music" else "YouTube",
-            tint = PsSteel400,
-            modifier = Modifier.size(14.dp)
-        )
+        if (enqueuing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = Accent,
+                strokeWidth = 1.5.dp
+            )
+        } else {
+            Icon(
+                imageVector = if (result.source == Source.YT_MUSIC) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
+                contentDescription = if (result.source == Source.YT_MUSIC) "YouTube Music" else "YouTube",
+                tint = PsSteel400,
+                modifier = Modifier.size(14.dp)
+            )
+        }
     }
 }
 

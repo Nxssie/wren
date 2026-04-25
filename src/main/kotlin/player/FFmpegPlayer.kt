@@ -45,6 +45,7 @@ class FFmpegPlayer {
     val shuffle = mutableStateOf(false)
     val repeatMode = mutableStateOf(RepeatMode.OFF)
     val isPaused = mutableStateOf(false)
+    val isEnqueuing = mutableStateOf(false)
 
     // ── FFmpeg internals ──
     private var grabber: FFmpegFrameGrabber? = null
@@ -95,9 +96,11 @@ class FFmpegPlayer {
         queue.value = shuffled
         queueIndex.value = startIndex
         val item = shuffled[startIndex]
+        isEnqueuing.value = true
         // Pre-resolve stream URL in background so playback starts instantly
         scope.launch {
             val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+            isEnqueuing.value = false
             loadInternal(resolvedUrl, item.videoId, item.title)
         }
         prefetchAt(shuffled, startIndex + 1, count = 4)
@@ -187,6 +190,7 @@ class FFmpegPlayer {
     }
 
     private suspend fun loadInternal(url: String, videoId: String, title: String = "") {
+        isEnqueuing.value = false
         currentTitle.value = videoId
         displayTitle.value = title
         position.value = 0.0
@@ -243,6 +247,7 @@ class FFmpegPlayer {
 
             } catch (e: Exception) {
                 isLoading.value = false
+                isEnqueuing.value = false
                 isPlaying.value = false
                 isPlayingInternal.set(false)
             }
@@ -280,11 +285,14 @@ class FFmpegPlayer {
             }
 
             try {
-                // Hold seekLock while grabbing to prevent concurrent seek() calls
                 val frame = synchronized(seekLock) { grabber.grabSamples() }
                 if (frame == null) {
-                    eofReached.set(true)
-                    break // EOF
+                    delay(100)
+                    val retry = synchronized(seekLock) { grabber.grabSamples() }
+                    if (retry == null) {
+                        eofReached.set(true)
+                        break
+                    }
                 }
 
                 if (frame.samples != null && frame.samples[0] != null) {

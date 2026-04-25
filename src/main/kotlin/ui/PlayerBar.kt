@@ -36,6 +36,7 @@ fun PlayerBar(player: FFmpegPlayer) {
     val isShuffle by player.shuffle
     val repeatMode by player.repeatMode
     val isPaused by player.isPaused
+    val isEnqueuing by player.isEnqueuing
     val hasPrevious = queueIndex > 0
     val hasNext = queueIndex >= 0 && queueIndex < queue.size - 1
 
@@ -78,7 +79,26 @@ fun PlayerBar(player: FFmpegPlayer) {
 
             // Seek slider + loading indicator
             Box(Modifier.weight(1f).height(20.dp)) {
-                if (isLoading) {
+                if (isEnqueuing) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().align(Alignment.Center),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = Accent,
+                            strokeWidth = 1.5.dp
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "enqueuing;",
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            fontFamily = FontMono
+                        )
+                    }
+                } else if (isLoading) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth().align(Alignment.Center),
                         color = PsSteel400,
