@@ -64,7 +64,6 @@ class FFmpegPlayer {
     private val isPlayingInternal = AtomicBoolean(false)
     private var eofReached = AtomicBoolean(false)
     private val _isPaused = AtomicBoolean(false)
-    private var autoAdvanceJob: Job? = null
 
     fun start() {
         warmupStreamConnection()
@@ -277,14 +276,12 @@ class FFmpegPlayer {
         eofReached.set(false)
         _isPaused.set(false)
         isPaused.value = false
-        var consecutiveNulls = 0
-        var framesSinceLastFrame = 0
-        var lastPositionUs = grabber.timestamp
-        var positionStuck = false
-        val nullThreshold = 8 // ~800ms of all-null frames before suspecting EOF
-        val framesBetweenNullsThreshold = 30 // ~1.5s of no frames at all
-        val maxExceptionRetries = 20 // ~2s of exceptions before giving up
-        var exceptionRetries = 0
+
+        // Timeout for detecting EOF vs network buffering (2 seconds of no frames)
+        val eofTimeoutMs = 2000L
+        var lastFrameTime = System.currentTimeMillis()
+        var hasReceivedFrame = false
+
         while (this@FFmpegPlayer.scope.coroutineContext.isActive && isPlayingInternal.get()) {
             // Wait until unpaused before grabbing — keeps grabber timestamp in sync with playback
             if (_isPaused.get()) {
@@ -294,33 +291,22 @@ class FFmpegPlayer {
 
             try {
                 val frame = synchronized(seekLock) { grabber.grabSamples() }
+
                 if (frame == null) {
-                    consecutiveNulls++
-                    framesSinceLastFrame++
-
-                    // Check if position stopped advancing — combined with null frames, strong EOF signal
-                    val currentPos = grabber.timestamp
-                    if (currentPos == lastPositionUs && lastPositionUs > 0) {
-                        positionStuck = true
-                    } else if (currentPos != lastPositionUs) {
-                        lastPositionUs = currentPos
-                        positionStuck = false
-                    }
-
-                    // EOF criteria: enough null frames AND position stopped advancing
-                    if (consecutiveNulls >= nullThreshold && (positionStuck || framesSinceLastFrame >= framesBetweenNullsThreshold)) {
+                    // No frame available — could be buffering or EOF
+                    // Only start timeout after we've successfully received at least one frame
+                    if (hasReceivedFrame && System.currentTimeMillis() - lastFrameTime > eofTimeoutMs) {
                         eofReached.set(true)
                         break
                     }
-
-                    // Exponential backoff for null frames: 100ms, 150ms, 200ms...
-                    delay(100L + consecutiveNulls * 50L)
+                    // Still within timeout or haven't received first frame yet
+                    delay(50)
                     continue
                 }
-                consecutiveNulls = 0
-                framesSinceLastFrame = 0
-                positionStuck = false
-                lastPositionUs = grabber.timestamp
+
+                // Got a frame — reset timeout and track that we've received data
+                lastFrameTime = System.currentTimeMillis()
+                hasReceivedFrame = true
 
                 if (frame.samples != null && frame.samples[0] != null) {
                     val sampleBuffer = frame.samples[0] as java.nio.Buffer
@@ -341,16 +327,10 @@ class FFmpegPlayer {
                         }
                     }
                 }
-                exceptionRetries = 0
             } catch (e: Exception) {
-                exceptionRetries++
-                if (exceptionRetries > maxExceptionRetries) {
-                    // Too many consecutive exceptions — stream likely broken, not just a hiccup
-                    eofReached.set(false) // Don't auto-advance on broken stream
-                    break
+                if (isPlayingInternal.get()) {
+                    delay(10)
                 }
-                // Exponential backoff for exceptions: 10ms, 20ms, 40ms...
-                delay(10L * (1L shl (exceptionRetries - 1).coerceIn(0, 8)))
             }
         }
 
@@ -361,9 +341,8 @@ class FFmpegPlayer {
         isPlaying.value = false
 
         // Auto-advance on EOF (only if not manually stopped)
-        if (eofReached.get() && isPlayingInternal.get()) {
-            autoAdvanceJob?.cancel()
-            autoAdvanceJob = scope.launch {
+        if (eofReached.get()) {
+            scope.launch {
                 val q = queue.value
                 when (repeatMode.value) {
                     RepeatMode.SINGLE -> {
