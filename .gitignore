@@ -10,3 +10,5 @@ wren.af~lock~*
 icon.png
 gradle.properties
 api.json
+local.properties
+dist-artifacts/

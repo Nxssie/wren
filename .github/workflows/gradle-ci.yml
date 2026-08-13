@@ -18,7 +18,7 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v6
       - name: Build and test
-        run: ./gradlew build test
+        run: ./gradlew :desktop:build :desktop:test
 
   distro:
     strategy:
@@ -43,8 +43,19 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v6
       - name: Build ${{ matrix.name }} distributable
-        run: ./gradlew package${{ matrix.format }}
+        run: ./gradlew :desktop:package${{ matrix.format }}
+      - name: Rename artifact
+        shell: bash
+        run: |
+          dir="desktop/build/compose/binaries/main/$(echo "${{ matrix.format }}" | tr '[:upper:]' '[:lower:]')"
+          cd "$dir"
+          case "${{ matrix.format }}" in
+            Deb) echo "ARTIFACT_GLOB=$dir/wren_*" >> "$GITHUB_ENV" ;; # already correct Debian convention
+            Msi) for f in wren-*.msi; do mv "$f" "Wren-${f#wren-}"; done; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
+            Dmg) for f in wren-*.dmg; do mv "$f" "Wren-${f#wren-}"; done; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
+          esac
       - uses: actions/upload-artifact@v6
         with:
           name: wren-${{ matrix.name }}
-          path: build/compose/binaries/main/*
+          path: ${{ env.ARTIFACT_GLOB }}
+          if-no-files-found: ignore

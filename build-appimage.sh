@@ -9,9 +9,9 @@ APPIMAGETOOL="./appimagetool"
 
 # 1. Build distributable
 echo ">>> Building distributable..."
-./gradlew createDistributable
+./gradlew :desktop:createDistributable
 
-DIST_DIR="build/compose/binaries/main/app/${APP_NAME}"
+DIST_DIR="desktop/build/compose/binaries/main/app/${APP_NAME}"
 if [ ! -d "$DIST_DIR" ]; then
     echo "ERROR: Expected distributable at $DIST_DIR — check the app name in build.gradle.kts"
     exit 1
@@ -60,8 +60,8 @@ Categories=AudioVideo;Music;
 EOF
 
 # Icon — use provided one or generate a placeholder
-if [ -f "wren.png" ]; then
-    cp wren.png "$APP_DIR/${APP_NAME}.png"
+if [ -f "desktop/wren.png" ]; then
+    cp desktop/wren.png "$APP_DIR/${APP_NAME}.png"
 else
     echo ">>> No icon.png found, generating placeholder..."
     # Try to generate with ImageMagick, fall back to a minimal PNG
