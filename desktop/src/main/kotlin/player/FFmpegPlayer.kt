@@ -15,6 +15,7 @@ import javax.sound.sampled.FloatControl
 import javax.sound.sampled.SourceDataLine
 import models.QueueItem
 import models.RepeatMode
+import util.Log
 
 /**
  * Lightweight in-process audio player backed by FFmpeg via JavaCV.
@@ -187,6 +188,7 @@ class FFmpegPlayer {
     }
 
     private suspend fun loadInternal(url: String, videoId: String, title: String = "") {
+        Log.i("FFmpegPlayer", "Loading videoId=$videoId title=\"$title\"")
         isEnqueuing.value = false
         currentTitle.value = videoId
         displayTitle.value = title
@@ -243,6 +245,7 @@ class FFmpegPlayer {
                 }
 
             } catch (e: Exception) {
+                Log.e("FFmpegPlayer", "Failed to load stream for videoId=$videoId", e)
                 isLoading.value = false
                 isEnqueuing.value = false
                 isPlaying.value = false
@@ -327,6 +330,7 @@ class FFmpegPlayer {
                 }
             } catch (e: Exception) {
                 if (isPlayingInternal.get()) {
+                    Log.w("FFmpegPlayer", "grabSamples/write failed, retrying: ${e.message}")
                     delay(10)
                 }
             }
@@ -433,6 +437,7 @@ class FFmpegPlayer {
             @Suppress("DEPRECATION")
             AudioSystem.getSourceDataLine(format) as SourceDataLine
         } catch (e: Exception) {
+            Log.w("FFmpegPlayer", "getSourceDataLine failed for native format (rate=$sampleRate, channels=$channels), falling back to 44100/16/2", e)
             // Final fallback: try with a generic format
             val fallback = AudioFormat(
                 AudioFormat.Encoding.PCM_SIGNED,

@@ -3,6 +3,7 @@ package auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import util.Log
 import java.io.File
 
 object AuthManager {
@@ -61,7 +62,7 @@ object AuthManager {
             runCatching {
                 val refreshed = refreshToken(current.refreshToken)
                 saveTokens(refreshed)
-            }
+            }.onFailure { Log.e("AuthManager", "Failed to refresh OAuth token", it) }
         } else {
             writeYtdlpCache(current)
         }
@@ -107,6 +108,6 @@ object AuthManager {
                 ?: snippet?.get("thumbnails")?.jsonObject
                     ?.get("default")?.jsonObject?.get("url")?.jsonPrimitive?.content
             if (!avatar.isNullOrEmpty()) avatarUrlFile.writeText(avatar)
-        }
+        }.onFailure { Log.e("AuthManager", "Failed to fetch account name/avatar", it) }
     }
 }

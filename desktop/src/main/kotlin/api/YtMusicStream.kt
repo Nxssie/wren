@@ -3,6 +3,7 @@ package api
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import util.Log
 import java.util.concurrent.TimeUnit
 
 private val streamJson = Json { ignoreUnknownKeys = true }
@@ -45,7 +46,10 @@ suspend fun resolveStreamUrl(videoId: String): String? {
 
 private suspend fun fetchStreamUrl(videoId: String): String? = withContext(Dispatchers.IO) {
     runCatching {
-        val ytDlp = findYtDlp() ?: return@runCatching null
+        val ytDlp = findYtDlp() ?: run {
+            Log.e("YtMusicStream", "yt-dlp not found — cannot resolve stream for videoId=$videoId")
+            return@runCatching null
+        }
         val process = ProcessBuilder(
             ytDlp,
             "--dump-json",
@@ -55,18 +59,29 @@ private suspend fun fetchStreamUrl(videoId: String): String? = withContext(Dispa
             "--prefer-free-formats",
             "--format", "bestaudio[ext=m4a]/bestaudio/best",
             "https://www.youtube.com/watch?v=$videoId"
-        ).start()
-        
+        ).redirectErrorStream(false).start()
+
+        val stderr = process.errorStream.bufferedReader()
         val output = process.inputStream.bufferedReader().use { it.readText() }
-        val exitCode = process.waitFor(10, TimeUnit.SECONDS)
-        
-        if (!exitCode || output.isBlank()) return@runCatching null
-        
+        val finished = process.waitFor(10, TimeUnit.SECONDS)
+
+        if (!finished) {
+            Log.e("YtMusicStream", "yt-dlp timed out after 10s for videoId=$videoId")
+            process.destroyForcibly()
+            return@runCatching null
+        }
+        if (process.exitValue() != 0 || output.isBlank()) {
+            val err = stderr.use { it.readText() }.trim()
+            Log.e("YtMusicStream", "yt-dlp exited ${process.exitValue()} for videoId=$videoId: $err")
+            return@runCatching null
+        }
+
         // Parse the JSON output to get the stream URL
         val json = Json { ignoreUnknownKeys = true }
         val root = json.parseToJsonElement(output).jsonObject
         root["url"]?.jsonPrimitive?.content
-    }.getOrNull()
+    }.onFailure { Log.e("YtMusicStream", "Exception resolving stream for videoId=$videoId", it) }
+        .getOrNull()
 }
 
 private fun findYtDlp(): String? {
