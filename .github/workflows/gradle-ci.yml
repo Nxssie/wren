@@ -45,8 +45,10 @@ jobs:
       - name: Build ${{ matrix.name }} distributable
         run: ./gradlew :desktop:package${{ matrix.format }}
       - name: Rename artifact
+        shell: bash
         run: |
-          cd desktop/build/compose/binaries/main
+          dir="desktop/build/compose/binaries/main/$(echo "${{ matrix.format }}" | tr '[:upper:]' '[:lower:]')"
+          cd "$dir"
           case "${{ matrix.format }}" in
             Deb) ;; # wren_*.deb is already correct Debian convention
             Msi) mv wren-*.msi Wren-*.msi ;;
@@ -56,4 +58,7 @@ jobs:
         with:
           name: wren-${{ matrix.name }}
           path: |
-            desktop/build/compose/binaries/main/Wren-*,desktop/build/compose/binaries/main/wren_*
+            desktop/build/compose/binaries/main/deb/wren_*
+            desktop/build/compose/binaries/main/msi/Wren-*
+            desktop/build/compose/binaries/main/dmg/Wren-*
+          if-no-files-found: ignore
