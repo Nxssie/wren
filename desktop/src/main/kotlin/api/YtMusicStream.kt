@@ -84,37 +84,49 @@ private suspend fun fetchStreamUrl(videoId: String): String? = withContext(Dispa
         .getOrNull()
 }
 
+private val isWindows = System.getProperty("os.name").lowercase().contains("win")
+
 private fun findYtDlp(): String? {
     if (ytDlpChecked) return ytDlpPath
     ytDlpChecked = true
-    
-    // Check common yt-dlp locations
-    val candidates = listOf(
-        System.getenv("YTDLP_PATH") ?: "",
+
+    val envPath = System.getenv("YTDLP_PATH")
+    if (!envPath.isNullOrBlank() && java.io.File(envPath).canExecute()) {
+        ytDlpPath = envPath
+        return envPath
+    }
+
+    // Check common absolute install locations by filesystem lookup — no "which"/"where"
+    // subprocess, since "which" doesn't exist on Windows.
+    val candidates = if (isWindows) emptyList() else listOf(
         "/snap/bin/yt-dlp",
         "/usr/local/bin/yt-dlp",
         "/usr/bin/yt-dlp"
-    ).filter { it.isNotBlank() }
-    
+    )
+
     for (path in candidates) {
-        val which = ProcessBuilder("which", path).start()
-        val result = which.inputStream.bufferedReader().use { it.readText().trim() }
-        val exitCode = which.waitFor()
-        if (exitCode == 0 && result.isNotBlank()) {
-            ytDlpPath = result
-            return result
+        if (java.io.File(path).canExecute()) {
+            ytDlpPath = path
+            return path
         }
     }
-    
-    // Try running yt-dlp directly (in PATH)
-    val proc = ProcessBuilder("yt-dlp", "--version").start()
-    val ver = proc.inputStream.bufferedReader().use { it.readText().trim() }
-    val exitCode = proc.waitFor()
-    if (exitCode == 0 && ver.isNotEmpty()) {
-        ytDlpPath = "yt-dlp"
-        return "yt-dlp"
+
+    // Fall back to PATH resolution: ProcessBuilder/CreateProcess both search PATH for the
+    // executable name, so this works cross-platform without any OS-specific lookup tool.
+    val names = if (isWindows) listOf("yt-dlp.exe", "yt-dlp") else listOf("yt-dlp")
+    for (name in names) {
+        val found = runCatching {
+            val proc = ProcessBuilder(name, "--version").start()
+            val ver = proc.inputStream.bufferedReader().use { it.readText().trim() }
+            val exitCode = proc.waitFor()
+            exitCode == 0 && ver.isNotEmpty()
+        }.getOrDefault(false)
+        if (found) {
+            ytDlpPath = name
+            return name
+        }
     }
-    
+
     ytDlpPath = null
     return null
 }

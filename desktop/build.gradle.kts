@@ -6,6 +6,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// JavaCPP ships native FFmpeg libs per-platform under a classifier; each CI job packages
+// for the OS it's running on, so only that OS's classifier needs to be on the classpath.
+val javacppPlatform = run {
+    val osName = System.getProperty("os.name").lowercase()
+    val osArch = System.getProperty("os.arch").lowercase()
+    when {
+        osName.contains("win") -> "windows-x86_64"
+        osName.contains("mac") -> if (osArch.contains("aarch64") || osArch.contains("arm")) "macosx-arm64" else "macosx-x86_64"
+        else -> "linux-x86_64"
+    }
+}
+
 dependencies {
     implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
@@ -15,7 +27,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.bytedeco:javacv:1.5.11")
     implementation("org.bytedeco:ffmpeg:7.1-1.5.11")
-    implementation("org.bytedeco:ffmpeg:7.1-1.5.11:linux-x86_64")
+    implementation("org.bytedeco:ffmpeg:7.1-1.5.11:$javacppPlatform")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
