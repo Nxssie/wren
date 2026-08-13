@@ -46,7 +46,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
             packageName = "wren"
-            packageVersion = "1.0.0"
+            packageVersion = "0.4.0"
             modules("java.net.http")
             linux {
                 iconFile.set(project.file("wren.png"))
