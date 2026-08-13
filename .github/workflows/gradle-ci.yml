@@ -50,15 +50,12 @@ jobs:
           dir="desktop/build/compose/binaries/main/$(echo "${{ matrix.format }}" | tr '[:upper:]' '[:lower:]')"
           cd "$dir"
           case "${{ matrix.format }}" in
-            Deb) ;; # wren_*.deb is already correct Debian convention
-            Msi) mv wren-*.msi Wren-*.msi ;;
-            Dmg) mv wren-*.dmg Wren-*.dmg ;;
+            Deb) echo "ARTIFACT_GLOB=$dir/wren_*" >> "$GITHUB_ENV" ;; # already correct Debian convention
+            Msi) mv wren-*.msi Wren-*.msi; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
+            Dmg) mv wren-*.dmg Wren-*.dmg; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
           esac
       - uses: actions/upload-artifact@v6
         with:
           name: wren-${{ matrix.name }}
-          path: |
-            desktop/build/compose/binaries/main/deb/wren_*
-            desktop/build/compose/binaries/main/msi/Wren-*
-            desktop/build/compose/binaries/main/dmg/Wren-*
+          path: ${{ env.ARTIFACT_GLOB }}
           if-no-files-found: ignore
