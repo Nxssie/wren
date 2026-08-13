@@ -403,6 +403,19 @@ class FFmpegPlayer {
         var lastFrameTime = System.currentTimeMillis()
         var hasReceivedFrame = false
 
+        // Auto-level loudness across tracks: nudge a smoothed gain so each track's short-term
+        // RMS approaches a common target, instead of every track playing at its native level.
+        var agcGain = 1.0f
+        val targetRms = 6000f
+        val agcSmoothing = 0.02f
+        val agcGainRange = 0.5f..2.0f
+
+        // Fade the first/last few seconds of a track in/out. The gapless preload already
+        // removes the silent gap between tracks, so this is what actually smooths the
+        // transition — a true overlapping crossfade would need to decode and mix two
+        // streams at once, which is a much bigger change than this.
+        val fadeSeconds = 2.5
+
         while (this@FFmpegPlayer.scope.coroutineContext.isActive && isPlayingInternal.get()) {
             // Wait until unpaused before grabbing — keeps grabber timestamp in sync with playback
             if (_isPaused.get()) {
@@ -435,13 +448,35 @@ class FFmpegPlayer {
                     if (remaining > 0) {
                         val (bytes, len) = bufferToBytes(sampleBuffer)
                         if (len > 0) {
-                            val vol = digitalVolume
-                            if (vol < 1.0f) {
-                                for (i in 0 until len step 2) {
-                                    val sample = ((bytes[i].toInt() and 0xFF) or ((bytes[i + 1].toInt() and 0xFF) shl 8)).toShort()
-                                    val scaled = (sample.toFloat() * vol).coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat())
-                                    bytes[i] = scaled.toInt().toByte()
-                                    bytes[i + 1] = (scaled.toInt() ushr 8).toByte()
+                            // Estimate this chunk's loudness and slowly steer agcGain toward
+                            // whatever gain would bring it to targetRms (clamped so near-silent
+                            // passages don't get amplified into audible noise).
+                            var sumSq = 0.0
+                            var i = 0
+                            while (i < len) {
+                                val s = ((bytes[i].toInt() and 0xFF) or ((bytes[i + 1].toInt() and 0xFF) shl 8)).toShort()
+                                sumSq += s.toDouble() * s.toDouble()
+                                i += 2
+                            }
+                            val sampleCount = len / 2
+                            if (sampleCount > 0) {
+                                val rms = kotlin.math.sqrt(sumSq / sampleCount).toFloat().coerceAtLeast(1f)
+                                val desiredGain = (targetRms / rms).coerceIn(agcGainRange)
+                                agcGain += (desiredGain - agcGain) * agcSmoothing
+                            }
+
+                            val dur = duration.value
+                            val pos = position.value
+                            val fadeIn = if (pos < fadeSeconds) (pos / fadeSeconds).toFloat().coerceIn(0f, 1f) else 1f
+                            val fadeOut = if (dur > 0 && dur - pos < fadeSeconds) ((dur - pos) / fadeSeconds).toFloat().coerceIn(0f, 1f) else 1f
+
+                            val gain = digitalVolume * agcGain * fadeIn * fadeOut
+                            if (gain != 1.0f) {
+                                for (b in 0 until len step 2) {
+                                    val sample = ((bytes[b].toInt() and 0xFF) or ((bytes[b + 1].toInt() and 0xFF) shl 8)).toShort()
+                                    val scaled = (sample.toFloat() * gain).coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat())
+                                    bytes[b] = scaled.toInt().toByte()
+                                    bytes[b + 1] = (scaled.toInt() ushr 8).toByte()
                                 }
                             }
                             line.write(bytes, 0, len)
