@@ -51,8 +51,8 @@ jobs:
           cd "$dir"
           case "${{ matrix.format }}" in
             Deb) echo "ARTIFACT_GLOB=$dir/wren_*" >> "$GITHUB_ENV" ;; # already correct Debian convention
-            Msi) mv wren-*.msi Wren-*.msi; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
-            Dmg) mv wren-*.dmg Wren-*.dmg; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
+            Msi) for f in wren-*.msi; do mv "$f" "Wren-${f#wren-}"; done; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
+            Dmg) for f in wren-*.dmg; do mv "$f" "Wren-${f#wren-}"; done; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
           esac
       - uses: actions/upload-artifact@v6
         with:
