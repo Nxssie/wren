@@ -40,16 +40,26 @@ kotlin {
     jvmToolchain(21)
 }
 
+// The real release version. Compose Desktop's Dmg validation requires MAJOR > 0, so macOS
+// gets its own jpackage-internal version below; the public artifact still gets renamed to
+// this version in CI. Deb/Msi have no such restriction and use it directly.
+val appVersion = "0.4.0"
+
 compose.desktop {
     application {
         mainClass = "MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Msi, TargetFormat.Dmg)
             packageName = "wren"
-            packageVersion = "0.4.0"
+            packageVersion = appVersion
             modules("java.net.http")
             linux {
                 iconFile.set(project.file("wren.png"))
+            }
+            macOS {
+                // Only satisfies jpackage's MAJOR > 0 rule for the Dmg builder — never shown
+                // to users. CI renames the produced .dmg to the real appVersion.
+                dmgPackageVersion = "1.0.0"
             }
         }
     }
