@@ -64,6 +64,18 @@ class FFmpegPlayer {
     private var eofReached = AtomicBoolean(false)
     private val _isPaused = AtomicBoolean(false)
 
+    // Consecutive stream-open failures (e.g. googlevideo rejecting the connection).
+    // Bounds the auto-skip-on-failure loop so an unplayable queue doesn't spin forever.
+    private var consecutiveLoadFailures = 0
+    private val maxConsecutiveLoadFailures = 3
+
+    // Gapless preload — the next track's grabber is opened and connected ahead of
+    // time so the transition on EOF doesn't pay network-connect + probe latency,
+    // which is what caused the audible cut before jumping to the next song.
+    private data class PreloadedTrack(val videoId: String, val grabber: FFmpegFrameGrabber)
+    private var preloadedNext: PreloadedTrack? = null
+    private val preloadLock = Any()
+
     fun start() {
         warmupStreamConnection()
     }
@@ -76,6 +88,7 @@ class FFmpegPlayer {
             audioLine?.close()
             audioLine = null
         }
+        discardPreload()
         isPlayingInternal.set(false)
     }
 
@@ -120,6 +133,7 @@ class FFmpegPlayer {
             if (newIdx >= 0) {
                 queueIndex.value = newIdx
                 prefetchAt(shuffled, newIdx + 1, count = 4)
+                schedulePreloadNext()
             }
         }
     }
@@ -130,6 +144,7 @@ class FFmpegPlayer {
             RepeatMode.ALL -> RepeatMode.SINGLE
             RepeatMode.SINGLE -> RepeatMode.OFF
         }
+        schedulePreloadNext()
     }
 
     fun next() {
@@ -200,22 +215,31 @@ class FFmpegPlayer {
         eofReached.set(false)
         stopPlayback()
 
-        val streamUrl = resolveStreamUrl(videoId) ?: url
+        // Reuse the preloaded grabber if it's for this exact track (gapless transition).
+        // Any other pending preload is now stale (user skipped/jumped elsewhere) — release it.
+        val preloaded = synchronized(preloadLock) {
+            val p = preloadedNext
+            preloadedNext = null
+            if (p?.videoId == videoId) p else {
+                p?.let { runCatching { it.grabber.stop() } }
+                null
+            }
+        }
 
         scope.launch {
             try {
-                // Create and configure grabber
-                val newGrabber = FFmpegFrameGrabber(streamUrl)
-                newGrabber.setAudioChannels(2)
-                newGrabber.setOption("sample_fmt", "s16")
-                newGrabber.setOption("re", "1")
-                newGrabber.setOption("timeout", "30000000")
+                // Create and configure grabber (or reuse the preloaded, already-connected one)
+                val newGrabber = if (preloaded != null) {
+                    Log.i("FFmpegPlayer", "Using preloaded grabber for videoId=$videoId (gapless)")
+                    preloaded.grabber
+                } else {
+                    val streamUrl = resolveStreamUrl(videoId) ?: url
+                    openGrabber(streamUrl)
+                }
 
                 synchronized(grabberLock) {
                     grabber = newGrabber
                 }
-
-                newGrabber.start()
 
                 // Determine duration
                 var durSeconds: Double? = null
@@ -244,13 +268,109 @@ class FFmpegPlayer {
                     playLoop(newGrabber, line)
                 }
 
+                consecutiveLoadFailures = 0
+                schedulePreloadNext()
+
             } catch (e: Exception) {
                 Log.e("FFmpegPlayer", "Failed to load stream for videoId=$videoId", e)
                 isLoading.value = false
                 isEnqueuing.value = false
                 isPlaying.value = false
                 isPlayingInternal.set(false)
+
+                consecutiveLoadFailures++
+                if (consecutiveLoadFailures > maxConsecutiveLoadFailures) {
+                    Log.e("FFmpegPlayer", "Giving up after $consecutiveLoadFailures consecutive failures")
+                } else {
+                    advanceToNext()
+                }
             }
+        }
+    }
+
+    /** Configures and connects a grabber against a resolved stream URL. */
+    private fun openGrabber(streamUrl: String): FFmpegFrameGrabber =
+        FFmpegFrameGrabber(streamUrl).also { g ->
+            g.setAudioChannels(2)
+            g.setOption("sample_fmt", "s16")
+            g.setOption("re", "1")
+            g.setOption("timeout", "30000000")
+            // NOTE: do NOT set a custom user_agent here — the resolved googlevideo URL is
+            // signed for the client yt-dlp used to fetch it (e.g. c=ANDROID_VR in the query
+            // string). Sending a mismatched desktop-browser UA gets every request rejected.
+            // reconnect only affects behavior on an actual mid-stream drop, so it's safe.
+            g.setOption("reconnect", "1")
+            g.setOption("reconnect_streamed", "1")
+            g.setOption("reconnect_delay_max", "5")
+            g.start()
+        }
+
+    /** Advances the queue to the next track, respecting repeat mode. Used on EOF and on load failure. */
+    private fun advanceToNext() {
+        val q = queue.value
+        when (repeatMode.value) {
+            RepeatMode.SINGLE -> {
+                if (q.isNotEmpty()) {
+                    val item = q[queueIndex.value]
+                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                }
+            }
+            else -> {
+                val nextIdx = queueIndex.value + 1
+                if (nextIdx < q.size) {
+                    queueIndex.value = nextIdx
+                    val item = q[nextIdx]
+                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                } else if (repeatMode.value == RepeatMode.ALL && q.isNotEmpty()) {
+                    queueIndex.value = 0
+                    val item = q[0]
+                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Opens and connects the FFmpegFrameGrabber for the upcoming track ahead of time,
+     * so the transition on EOF (or manual next()) can reuse it instantly instead of
+     * paying network-connect + stream-probe latency during the gap.
+     */
+    private fun schedulePreloadNext() {
+        discardPreload()
+
+        val q = queue.value
+        if (q.isEmpty()) return
+        val idx = queueIndex.value
+        val nextIdx = when {
+            repeatMode.value == RepeatMode.SINGLE -> return // same track repeats — nothing new to preload
+            idx + 1 < q.size -> idx + 1
+            repeatMode.value == RepeatMode.ALL -> 0
+            else -> return
+        }
+        val item = q[nextIdx]
+
+        scope.launch {
+            runCatching {
+                val streamUrl = resolveStreamUrl(item.videoId) ?: item.url
+                val g = openGrabber(streamUrl)
+
+                synchronized(preloadLock) {
+                    // Only keep it if the queue hasn't moved on underneath us while we connected
+                    if (queue.value === q && queueIndex.value == idx) {
+                        preloadedNext = PreloadedTrack(item.videoId, g)
+                        Log.i("FFmpegPlayer", "Preloaded next track videoId=${item.videoId}")
+                    } else {
+                        runCatching { g.stop() }
+                    }
+                }
+            }.onFailure { Log.w("FFmpegPlayer", "Failed to preload next track videoId=${item.videoId}", it) }
+        }
+    }
+
+    private fun discardPreload() {
+        synchronized(preloadLock) {
+            preloadedNext?.let { p -> runCatching { p.grabber.stop() } }
+            preloadedNext = null
         }
     }
 
@@ -344,31 +464,11 @@ class FFmpegPlayer {
 
         // Auto-advance on EOF (only if not manually stopped)
         if (eofReached.get()) {
-            scope.launch {
-                val q = queue.value
-                when (repeatMode.value) {
-                    RepeatMode.SINGLE -> {
-                        if (q.isNotEmpty()) {
-                            val item = q[queueIndex.value]
-                            loadInternal(item.url, item.videoId, item.title)
-                        }
-                    }
-                    else -> {
-                        val nextIdx = queueIndex.value + 1
-                        if (nextIdx < q.size) {
-                            queueIndex.value = nextIdx
-                            val item = q[nextIdx]
-                            scope.launch { resolveStreamUrl(item.videoId) }
-                            loadInternal(item.url, item.videoId, item.title)
-                        } else if (repeatMode.value == RepeatMode.ALL && q.isNotEmpty()) {
-                            queueIndex.value = 0
-                            val item = q[0]
-                            scope.launch { resolveStreamUrl(item.videoId) }
-                            loadInternal(item.url, item.videoId, item.title)
-                        }
-                    }
-                }
-            }
+            Log.i(
+                "FFmpegPlayer",
+                "EOF for videoId=${currentTitle.value} at position=${position.value}s / duration=${duration.value}s"
+            )
+            advanceToNext()
         }
     }
 
