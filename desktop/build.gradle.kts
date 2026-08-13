@@ -57,8 +57,10 @@ compose.desktop {
                 iconFile.set(project.file("wren.png"))
             }
             macOS {
-                // Only satisfies jpackage's MAJOR > 0 rule for the Dmg builder — never shown
-                // to users. CI renames the produced .dmg to the real appVersion.
+                // Both the app-image bundler (createDistributable) and the Dmg bundler
+                // enforce jpackage's MAJOR > 0 rule, so both need overriding here — never
+                // shown to users. CI renames the produced .dmg to the real appVersion.
+                packageVersion = "1.0.0"
                 dmgPackageVersion = "1.0.0"
             }
         }
