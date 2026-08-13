@@ -44,6 +44,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Build ${{ matrix.name }} distributable
         run: ./gradlew :desktop:package${{ matrix.format }}
+      - name: Dump jpackage logs on failure
+        if: failure()
+        shell: bash
+        run: cat desktop/build/compose/logs/*/*.txt 2>/dev/null || true
       - name: Rename artifact
         shell: bash
         run: |
