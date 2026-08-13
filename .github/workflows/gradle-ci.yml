@@ -44,6 +44,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Build ${{ matrix.name }} distributable
         run: ./gradlew :desktop:package${{ matrix.format }}
+      - name: Dump jpackage logs on failure
+        if: failure()
+        shell: bash
+        run: cat desktop/build/compose/logs/*/*.txt 2>/dev/null || true
       - name: Rename artifact
         shell: bash
         run: |
@@ -52,7 +56,13 @@ jobs:
           case "${{ matrix.format }}" in
             Deb) echo "ARTIFACT_GLOB=$dir/wren_*" >> "$GITHUB_ENV" ;; # already correct Debian convention
             Msi) for f in wren-*.msi; do mv "$f" "Wren-${f#wren-}"; done; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
-            Dmg) for f in wren-*.dmg; do mv "$f" "Wren-${f#wren-}"; done; echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV" ;;
+            Dmg)
+              # dmgPackageVersion is a jpackage-internal placeholder (see desktop/build.gradle.kts);
+              # rename to the real release version (desktop/build.gradle.kts' appVersion).
+              app_version=$(sed -n 's/.*val appVersion = "\([^"]*\)".*/\1/p' "$GITHUB_WORKSPACE/desktop/build.gradle.kts")
+              mv wren-*.dmg "Wren-${app_version}.dmg"
+              echo "ARTIFACT_GLOB=$dir/Wren-*" >> "$GITHUB_ENV"
+              ;;
           esac
       - uses: actions/upload-artifact@v6
         with:
