@@ -23,14 +23,16 @@ object YoutubeMusic {
         if (AuthManager.isAuthenticated) AuthManager.ensureValidToken()
         val music = async { searchYouTubeMusic(query, limit) }
         val video = async { searchYouTube(query, limit) }
-        val combined = interleave(music.await(), video.await())
+        val soundcloud = async { SoundCloud.searchTracks(query, limit) }
+        val combined = interleave(interleave(music.await(), video.await()), soundcloud.await())
         if (!AuthManager.isAuthenticated) return@coroutineScope combined
-        val counts = fetchViewCounts(combined.map { it.videoId })
-        combined.map { it.copy(viewCount = counts[it.videoId]) }
+        val ytIds = combined.filter { it.source != Source.SOUNDCLOUD }.map { it.videoId }
+        val counts = fetchViewCounts(ytIds)
+        combined.map { if (it.source != Source.SOUNDCLOUD) it.copy(viewCount = counts[it.videoId]) else it }
     }
 }
 
-private fun <T> interleave(a: List<T>, b: List<T>): List<T> {
+internal fun <T> interleave(a: List<T>, b: List<T>): List<T> {
     val out = mutableListOf<T>()
     val max = maxOf(a.size, b.size)
     for (i in 0 until max) {

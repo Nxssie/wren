@@ -28,20 +28,26 @@ fun warmupStreamConnection() {
     }.also { it.isDaemon = true }.start()
 }
 
-private data class CachedUrl(val url: String, val fetchedAt: Long)
+private data class CachedUrl(val url: String, val fetchedAt: Long, val ttlMs: Long)
 private val urlCache = mutableMapOf<String, CachedUrl>()
-private const val CACHE_TTL_MS = 4 * 60 * 60 * 1000L // 4 horas
+private const val YOUTUBE_TTL_MS = 4 * 60 * 60 * 1000L // 4 hours
+private const val SOUNDCLOUD_TTL_MS = 20 * 60 * 1000L  // 20 min — SC progressive URLs expire sooner
 
 // Cache yt-dlp path
 private var ytDlpPath: String? = null
 private var ytDlpChecked = false
 
+private fun isSoundCloud(key: String): Boolean = key.startsWith("http") && "soundcloud.com" in key
+
 suspend fun resolveStreamUrl(videoId: String): String? {
     val cached = urlCache[videoId]
-    if (cached != null && System.currentTimeMillis() - cached.fetchedAt < CACHE_TTL_MS) {
+    if (cached != null && System.currentTimeMillis() - cached.fetchedAt < cached.ttlMs) {
         return cached.url
     }
-    return fetchStreamUrl(videoId)?.also { urlCache[videoId] = CachedUrl(it, System.currentTimeMillis()) }
+    return fetchStreamUrl(videoId)?.also {
+        val ttl = if (isSoundCloud(videoId)) SOUNDCLOUD_TTL_MS else YOUTUBE_TTL_MS
+        urlCache[videoId] = CachedUrl(it, System.currentTimeMillis(), ttl)
+    }
 }
 
 private suspend fun fetchStreamUrl(videoId: String): String? = withContext(Dispatchers.IO) {
@@ -50,6 +56,12 @@ private suspend fun fetchStreamUrl(videoId: String): String? = withContext(Dispa
             Log.e("YtMusicStream", "yt-dlp not found — cannot resolve stream for videoId=$videoId")
             return@runCatching null
         }
+        // SoundCloud keys are full permalinks; YouTube keys are bare video IDs.
+        val target = if (videoId.startsWith("http")) videoId else "https://www.youtube.com/watch?v=$videoId"
+        val format = if (isSoundCloud(target))
+            "bestaudio[protocol^=http]/bestaudio"
+        else
+            "bestaudio[ext=m4a]/bestaudio/best"
         val process = ProcessBuilder(
             ytDlp,
             "--dump-json",
@@ -57,8 +69,8 @@ private suspend fun fetchStreamUrl(videoId: String): String? = withContext(Dispa
             "--quiet",
             "--no-warnings",
             "--prefer-free-formats",
-            "--format", "bestaudio[ext=m4a]/bestaudio/best",
-            "https://www.youtube.com/watch?v=$videoId"
+            "--format", format,
+            target
         ).redirectErrorStream(false).start()
 
         val stderr = process.errorStream.bufferedReader()

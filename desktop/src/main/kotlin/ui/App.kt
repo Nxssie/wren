@@ -127,8 +127,9 @@ fun AppWindow(onCloseRequest: () -> Unit) {
                                 player = player,
                                 onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                             )
-                            selectedTab == 1 -> LibraryScreen(player)
-                            selectedTab == 2 -> NowPlayingScreen(player)
+                            selectedTab == 1 -> DiscoverScreen(player)
+                            selectedTab == 2 -> LibraryScreen(player)
+                            selectedTab == 3 -> NowPlayingScreen(player)
                         }
                     }
                 }
@@ -213,16 +214,22 @@ private fun Sidebar(
             onClick = { onTabChange(0) }
         )
         NavItem(
-            code = "LIB",
-            label = "library",
+            code = "DSC",
+            label = "discover",
             selected = selectedTab == 1,
             onClick = { onTabChange(1) }
         )
         NavItem(
-            code = "NOW",
-            label = "now playing",
+            code = "LIB",
+            label = "library",
             selected = selectedTab == 2,
             onClick = { onTabChange(2) }
+        )
+        NavItem(
+            code = "NOW",
+            label = "now playing",
+            selected = selectedTab == 3,
+            onClick = { onTabChange(3) }
         )
 
         Spacer(Modifier.weight(1f))

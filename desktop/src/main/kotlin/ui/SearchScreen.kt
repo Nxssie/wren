@@ -11,7 +11,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoLibrary
 import models.ArtistResult
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import models.SearchResult
+import api.SoundCloud
 import api.YoutubeMusic
 import api.resolveStreamUrl
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import player.FFmpegPlayer
 import models.QueueItem
+import models.toQueueItem
 import java.net.URL
 
 enum class SortOrder(val label: String) {
@@ -49,15 +53,23 @@ enum class SortOrder(val label: String) {
     RELEVANCE("Relevance"),
     YT_MUSIC_FIRST("YT Music first"),
     YOUTUBE_FIRST("YouTube first"),
+    SOUNDCLOUD_FIRST("SoundCloud first"),
     DURATION("Duration")
 }
 
 private fun List<SearchResult>.sorted(order: SortOrder): List<SearchResult> = when (order) {
-    SortOrder.POPULARITY    -> sortedByDescending { it.viewCount ?: -1L }
-    SortOrder.RELEVANCE     -> this
-    SortOrder.YT_MUSIC_FIRST -> sortedBy { if (it.source == Source.YT_MUSIC) 0 else 1 }
-    SortOrder.YOUTUBE_FIRST -> sortedBy { if (it.source == Source.YOUTUBE) 0 else 1 }
-    SortOrder.DURATION      -> sortedBy { parseDurationToSeconds(it.duration) }
+    SortOrder.POPULARITY -> sortedByDescending { it.viewCount ?: -1L }
+    SortOrder.RELEVANCE  -> this
+    SortOrder.YT_MUSIC_FIRST -> sortedBy {
+        when (it.source) { Source.YT_MUSIC -> 0; Source.YOUTUBE -> 1; Source.SOUNDCLOUD -> 2 }
+    }
+    SortOrder.YOUTUBE_FIRST -> sortedBy {
+        when (it.source) { Source.YOUTUBE -> 0; Source.YT_MUSIC -> 1; Source.SOUNDCLOUD -> 2 }
+    }
+    SortOrder.SOUNDCLOUD_FIRST -> sortedBy {
+        when (it.source) { Source.SOUNDCLOUD -> 0; Source.YT_MUSIC -> 1; Source.YOUTUBE -> 2 }
+    }
+    SortOrder.DURATION -> sortedBy { parseDurationToSeconds(it.duration) }
 }
 
 private fun parseDurationToSeconds(duration: String): Int {
@@ -234,6 +246,8 @@ fun TrackRow(
     val active = currentTitle == result.videoId
     val enqueuing = isEnqueuing && active
     val canNavigateArtist = onArtistClick != null && result.artistId != null
+    val scope = rememberCoroutineScope()
+    var buildingStation by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
@@ -262,7 +276,7 @@ fun TrackRow(
             }
             .background(Color.Transparent)
             .clickable(enabled = !enqueuing) {
-                player.loadQueue(results.map { QueueItem(it.url, it.videoId, it.title, it.artist) }, index)
+                player.loadQueue(results.map { it.toQueueItem() }, index)
             }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -293,6 +307,38 @@ fun TrackRow(
         Spacer(Modifier.width(16.dp))
         Text(result.duration, color = PsSteel400, fontSize = 12.sp)
         Spacer(Modifier.width(10.dp))
+        if (result.source == Source.SOUNDCLOUD) {
+            IconButton(
+                onClick = {
+                    if (buildingStation) return@IconButton
+                    buildingStation = true
+                    scope.launch {
+                        runCatching {
+                            val station = SoundCloud.stationFor(result)
+                            player.loadQueue(station.map { it.toQueueItem() }, 0)
+                        }
+                        buildingStation = false
+                    }
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                if (buildingStation) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = PsIrisCyan,
+                        strokeWidth = 1.5.dp
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Radio,
+                        contentDescription = "Start station",
+                        tint = PsSteel400,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+        }
         if (enqueuing) {
             CircularProgressIndicator(
                 modifier = Modifier.size(20.dp),
@@ -301,8 +347,16 @@ fun TrackRow(
             )
         } else {
             Icon(
-                imageVector = if (result.source == Source.YT_MUSIC) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
-                contentDescription = if (result.source == Source.YT_MUSIC) "YouTube Music" else "YouTube",
+                imageVector = when (result.source) {
+                    Source.YT_MUSIC -> Icons.Default.MusicNote
+                    Source.YOUTUBE -> Icons.Default.VideoLibrary
+                    Source.SOUNDCLOUD -> Icons.Default.Cloud
+                },
+                contentDescription = when (result.source) {
+                    Source.YT_MUSIC -> "YouTube Music"
+                    Source.YOUTUBE -> "YouTube"
+                    Source.SOUNDCLOUD -> "SoundCloud"
+                },
                 tint = PsSteel400,
                 modifier = Modifier.size(14.dp)
             )

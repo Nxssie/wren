@@ -109,7 +109,7 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                NpArtwork(videoId = currentId, sizeDp = 220)
+                NpArtwork(videoId = currentId, artworkUrl = currentItem?.artworkUrl, sizeDp = 220)
                 Text(
                     displayTitle,
                     fontFamily = FontFamily.SansSerif,
@@ -350,13 +350,13 @@ private fun NpHeader(queueIndex: Int, queueSize: Int) {
 }
 
 @Composable
-private fun NpArtwork(videoId: String, sizeDp: Int) {
+private fun NpArtwork(videoId: String, artworkUrl: String?, sizeDp: Int) {
     Box(
         Modifier
             .size(sizeDp.dp)
             .border(1.dp, Color(0x1A000000))
     ) {
-        NpThumbnail(videoId, Modifier.fillMaxSize())
+        NpThumbnail(videoId, artworkUrl, Modifier.fillMaxSize())
         // Reticle corner brackets
         Canvas(Modifier.fillMaxSize()) {
             val c  = 14.dp.toPx()
@@ -376,15 +376,19 @@ private fun NpArtwork(videoId: String, sizeDp: Int) {
 }
 
 @Composable
-private fun NpThumbnail(videoId: String, modifier: Modifier) {
-    var bitmap by remember(videoId) { mutableStateOf<ImageBitmap?>(null) }
+private fun NpThumbnail(videoId: String, artworkUrl: String?, modifier: Modifier) {
+    var bitmap by remember(videoId, artworkUrl) { mutableStateOf<ImageBitmap?>(null) }
 
-    LaunchedEffect(videoId) {
+    LaunchedEffect(videoId, artworkUrl) {
         withContext(Dispatchers.IO) {
-            val candidates = listOf(
-                "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
-                "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
-            )
+            val candidates = if (!artworkUrl.isNullOrBlank()) {
+                listOf(artworkUrl)
+            } else {
+                listOf(
+                    "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
+                    "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+                )
+            }
             for (url in candidates) {
                 runCatching {
                     val img = org.jetbrains.skia.Image.makeFromEncoded(URL(url).readBytes())

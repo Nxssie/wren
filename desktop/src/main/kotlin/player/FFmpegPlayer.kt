@@ -1,5 +1,6 @@
 package player
 
+import api.ListeningHistory
 import api.resolveStreamUrl
 import api.warmupStreamConnection
 import androidx.compose.runtime.MutableState
@@ -93,9 +94,13 @@ class FFmpegPlayer {
     }
 
     fun load(url: String, videoId: String, title: String = "") {
-        queue.value = emptyList()
-        queueIndex.value = -1
-        scope.launch { loadInternal(url, videoId, title) }
+        val item = QueueItem(url = url, videoId = videoId, title = title)
+        queue.value = listOf(item)
+        queueIndex.value = 0
+        scope.launch {
+            val resolvedUrl = resolveStreamUrl(videoId) ?: url
+            loadInternal(item, resolvedUrl)
+        }
     }
 
     fun loadQueue(items: List<QueueItem>, startIndex: Int = 0) {
@@ -112,7 +117,7 @@ class FFmpegPlayer {
         scope.launch {
             val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
             isEnqueuing.value = false
-            loadInternal(resolvedUrl, item.videoId, item.title)
+            loadInternal(item, resolvedUrl)
         }
         prefetchAt(shuffled, startIndex + 1, count = 4)
     }
@@ -153,7 +158,10 @@ class FFmpegPlayer {
             RepeatMode.SINGLE -> {
                 if (q.isNotEmpty()) {
                     val item = q[queueIndex.value]
-                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                    scope.launch {
+                        val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                        loadInternal(item, resolvedUrl)
+                    }
                 }
                 return
             }
@@ -161,14 +169,20 @@ class FFmpegPlayer {
                 if (q.size <= 1) {
                     if (q.isNotEmpty()) {
                         val item = q[queueIndex.value]
-                        scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                        scope.launch {
+                            val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                            loadInternal(item, resolvedUrl)
+                        }
                     }
                     return
                 }
                 val idx = (queueIndex.value + 1) % q.size
                 queueIndex.value = idx
                 val item = q[idx]
-                scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                scope.launch {
+                    val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                    loadInternal(item, resolvedUrl)
+                }
                 prefetchAt(q, (idx + 1) % q.size)
                 return
             }
@@ -178,7 +192,10 @@ class FFmpegPlayer {
         if (idx < q.size) {
             queueIndex.value = idx
             val item = q[idx]
-            scope.launch { loadInternal(item.url, item.videoId, item.title) }
+            scope.launch {
+                val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                loadInternal(item, resolvedUrl)
+            }
             prefetchAt(q, idx + 1)
         }
     }
@@ -189,7 +206,10 @@ class FFmpegPlayer {
         if (idx >= 0) {
             queueIndex.value = idx
             val item = q[idx]
-            scope.launch { loadInternal(item.url, item.videoId, item.title) }
+            scope.launch {
+                val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                loadInternal(item, resolvedUrl)
+            }
             prefetchAt(q, idx - 1)
         }
     }
@@ -202,7 +222,9 @@ class FFmpegPlayer {
             }
     }
 
-    private suspend fun loadInternal(url: String, videoId: String, title: String = "") {
+    private suspend fun loadInternal(item: QueueItem, resolvedUrl: String) {
+        val videoId = item.videoId
+        val title = item.title
         Log.i("FFmpegPlayer", "Loading videoId=$videoId title=\"$title\"")
         isEnqueuing.value = false
         currentTitle.value = videoId
@@ -233,7 +255,7 @@ class FFmpegPlayer {
                     Log.i("FFmpegPlayer", "Using preloaded grabber for videoId=$videoId (gapless)")
                     preloaded.grabber
                 } else {
-                    val streamUrl = resolveStreamUrl(videoId) ?: url
+                    val streamUrl = resolveStreamUrl(videoId) ?: resolvedUrl
                     openGrabber(streamUrl)
                 }
 
@@ -259,6 +281,9 @@ class FFmpegPlayer {
 
                 isPlayingInternal.set(true)
                 isPlaying.value = true
+
+                // Record listening history for SoundCloud tracks
+                ListeningHistory.record(item)
 
                 // Start position updater
                 startPositionUpdater(newGrabber)
@@ -312,7 +337,10 @@ class FFmpegPlayer {
             RepeatMode.SINGLE -> {
                 if (q.isNotEmpty()) {
                     val item = q[queueIndex.value]
-                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                    scope.launch {
+                        val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                        loadInternal(item, resolvedUrl)
+                    }
                 }
             }
             else -> {
@@ -320,11 +348,17 @@ class FFmpegPlayer {
                 if (nextIdx < q.size) {
                     queueIndex.value = nextIdx
                     val item = q[nextIdx]
-                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                    scope.launch {
+                        val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                        loadInternal(item, resolvedUrl)
+                    }
                 } else if (repeatMode.value == RepeatMode.ALL && q.isNotEmpty()) {
                     queueIndex.value = 0
                     val item = q[0]
-                    scope.launch { loadInternal(item.url, item.videoId, item.title) }
+                    scope.launch {
+                        val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+                        loadInternal(item, resolvedUrl)
+                    }
                 }
             }
         }

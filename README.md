@@ -6,7 +6,7 @@
 
 <p align="center">
   A native desktop music player built with Kotlin and Compose Desktop.<br/>
-  Searches and streams audio from YouTube Music and YouTube — no ads, login optional.
+  Searches and streams audio from YouTube Music, YouTube, and SoundCloud — no ads, login optional.
 </p>
 
 <p align="center">
@@ -18,7 +18,9 @@
 
 ## Features
 
-- Search songs across YouTube Music and YouTube simultaneously, results interleaved and sortable by popularity, duration, or source
+- Search songs across YouTube Music, YouTube, and SoundCloud simultaneously, results interleaved and sortable by popularity, duration, or source
+- SoundCloud Station: start a radio of related tracks from any SoundCloud result
+- Weekly Discovery: auto-generated playlist from your SoundCloud listening history (interest-based)
 - Artist pages with top songs, albums, singles, and EPs
 - Queue playback with automatic prefetching of upcoming tracks
 - Google OAuth login to access your YouTube Music playlists and library
@@ -27,7 +29,7 @@
 - Dark/light theme toggle in the sidebar
 - Persistent player bar with seek, volume, and queue controls
 - Stream URL resolution via `yt-dlp` (bundled in AppImage, or available in PATH)
-- 4-hour stream URL cache to avoid redundant requests
+- 4-hour stream URL cache for YouTube, 20-minute cache for SoundCloud progressive streams
 
 ## Stack
 
@@ -105,6 +107,20 @@ cp gradle.properties.example gradle.properties
 ./gradlew :desktop:packageDeb
 ./gradlew :desktop:packageRpm
 ```
+
+## SoundCloud (no login required)
+
+SoundCloud search, station, and weekly discovery work out of the box. The client ID is scraped automatically from the SoundCloud web app.
+
+To use your own client ID, create `~/.config/wren/soundcloud.json`:
+
+```json
+{
+  "client_id": "YOUR_SOUNDCLOUD_CLIENT_ID"
+}
+```
+
+Listening history is stored locally at `~/.config/wren/history.json` and used to generate the weekly discovery playlist.
 
 ## Authentication (optional)
 
