@@ -1,6 +1,6 @@
 package api
 
-import auth.AuthManager
+import auth.GoogleAuth
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -18,8 +18,8 @@ private val ytApiClient = HttpClient.newHttpClient()
 private val ytApiJson = Json { ignoreUnknownKeys = true }
 
 suspend fun fetchUserPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
-    AuthManager.ensureValidToken()
-    val token = AuthManager.accessToken ?: return@withContext emptyList()
+    GoogleAuth.ensureValidToken()
+    val token = GoogleAuth.accessToken ?: return@withContext emptyList()
     val response = ytApiClient.send(
         HttpRequest.newBuilder()
             .uri(URI.create("https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50"))
@@ -123,7 +123,7 @@ private suspend fun fetchPlaylistCoverFromBrowse(playlistId: String): String? = 
 }
 
 suspend fun fetchPlaylistTracks(playlistId: String): List<PlaylistTrack> = withContext(Dispatchers.IO) {
-    val token = AuthManager.accessToken ?: return@withContext emptyList()
+    val token = GoogleAuth.accessToken ?: return@withContext emptyList()
     val response = ytApiClient.send(
         HttpRequest.newBuilder()
             .uri(URI.create("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=$playlistId&maxResults=50"))
@@ -169,7 +169,7 @@ suspend fun fetchPlaylistTracks(playlistId: String): List<PlaylistTrack> = withC
 
 suspend fun fetchSubscriberCounts(channelIds: List<String>): Map<String, Long> = withContext(Dispatchers.IO) {
     if (channelIds.isEmpty()) return@withContext emptyMap()
-    val token = AuthManager.accessToken ?: return@withContext emptyMap()
+    val token = GoogleAuth.accessToken ?: return@withContext emptyMap()
     val ids = channelIds.joinToString(",")
     val response = ytApiClient.send(
         HttpRequest.newBuilder()
@@ -190,7 +190,7 @@ suspend fun fetchSubscriberCounts(channelIds: List<String>): Map<String, Long> =
 
 suspend fun fetchViewCounts(videoIds: List<String>): Map<String, Long> = withContext(Dispatchers.IO) {
     if (videoIds.isEmpty()) return@withContext emptyMap()
-    val token = AuthManager.accessToken ?: return@withContext emptyMap()
+    val token = GoogleAuth.accessToken ?: return@withContext emptyMap()
     val ids = videoIds.joinToString(",")
     val response = ytApiClient.send(
         HttpRequest.newBuilder()
