@@ -12,3 +12,5 @@ gradle.properties
 api.json
 local.properties
 dist-artifacts/
+squashfs-root/
+client_secret*.json
