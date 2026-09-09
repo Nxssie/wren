@@ -122,6 +122,20 @@ class FFmpegPlayer {
         prefetchAt(shuffled, startIndex + 1, count = 4)
     }
 
+    /** Play the track at [index] of the *current* queue, preserving its order (unlike [loadQueue]). */
+    fun jumpTo(index: Int) {
+        val q = queue.value
+        val item = q.getOrNull(index) ?: return
+        queueIndex.value = index
+        isEnqueuing.value = true
+        scope.launch {
+            val resolvedUrl = resolveStreamUrl(item.videoId) ?: item.url
+            isEnqueuing.value = false
+            loadInternal(item, resolvedUrl)
+        }
+        prefetchAt(q, index + 1, count = 4)
+    }
+
     fun toggleShuffle() {
         shuffle.value = !shuffle.value
         val q = queue.value

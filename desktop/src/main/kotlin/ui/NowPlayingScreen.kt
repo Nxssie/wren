@@ -9,6 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -35,10 +38,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import player.FFmpegPlayer
 import models.QueueItem
-import java.net.URL
+import java.net.URI
 
 // Lyrics state machine
 private sealed class LyricsState {
@@ -72,25 +76,30 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
     var lyricsState by remember { mutableStateOf<LyricsState>(LyricsState.Idle) }
     var queueHeight by remember { mutableStateOf(200.dp) }
 
-    LaunchedEffect(currentId) {
+    // Keyed on the metadata actually sent, so a fast track change never fetches
+    // the previous track's title/artist.
+    LaunchedEffect(currentId, displayTitle, artist) {
+        if (displayTitle.isBlank()) {
+            lyricsState = LyricsState.Loading
+            return@LaunchedEffect
+        }
         lyricsState = LyricsState.Loading
-        // Wait up to 5s for duration to arrive from mpv
+        // Wait up to 5s for duration (improves lrclib matching); proceed without it otherwise
         repeat(25) {
             if (player.duration.value > 0) return@repeat
             delay(200)
         }
-        val dur = player.duration.value
-        lyricsState = fetchLyrics(displayTitle, artist, dur)
+        lyricsState = fetchLyrics(displayTitle, artist, player.duration.value)
             ?.let { LyricsState.Loaded(it) }
             ?: LyricsState.NotFound
     }
 
-    // Active lyric line index
+    // Active lyric line index; -1 for plain (unsynced) lyrics so nothing is highlighted
     val posMs = (position * 1000).toLong()
     val activeLineIdx = remember(lyricsState, posMs) {
-        val lines = (lyricsState as? LyricsState.Loaded)?.result?.lines ?: return@remember 0
-        val idx = lines.indexOfLast { it.timeMs <= posMs }
-        if (idx < 0) 0 else idx
+        val result = (lyricsState as? LyricsState.Loaded)?.result ?: return@remember -1
+        if (!result.synced) return@remember -1
+        result.lines.indexOfLast { it.timeMs <= posMs }.coerceAtLeast(0)
     }
 
     Column(Modifier.fillMaxSize().background(Background)) {
@@ -104,7 +113,7 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
                     .fillMaxHeight()
                     .background(Surface)
                     .drawBehind {
-                        drawLine(PsPearl200, Offset(size.width, 0f), Offset(size.width, size.height), 1f)
+                        drawLine(Hairline, Offset(size.width, 0f), Offset(size.width, size.height), 1f)
                     }
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -135,7 +144,8 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
                     progress = progress,
                     position = position,
                     duration = duration,
-                    isLoading = isLoading
+                    isLoading = isLoading,
+                    onSeek = { fraction -> if (duration > 0.0) player.seek(fraction * duration) }
                 )
             }
 
@@ -161,11 +171,10 @@ private fun NpLyrics(
     activeLineIdx: Int
 ) {
     val listState = rememberLazyListState()
+    val autoScroll = rememberUserAwareAutoScroll(listState)
 
     LaunchedEffect(activeLineIdx) {
-        if (activeLineIdx > 1) {
-            listState.animateScrollToItem((activeLineIdx - 2).coerceAtLeast(0))
-        }
+        if (activeLineIdx > 1) autoScroll((activeLineIdx - 2).coerceAtLeast(0))
     }
 
     Column(
@@ -173,7 +182,7 @@ private fun NpLyrics(
             .drawBehind {
                 // Top 1px hairline separator
                 drawLine(
-                    color = Color(0x1F000000),
+                    color = Hairline,
                     start = Offset(0f, 0f),
                     end = Offset(size.width, 0f),
                     strokeWidth = 1f
@@ -241,12 +250,14 @@ private fun NpLyrics(
                 ) {
                     itemsIndexed(lines) { index, line ->
                         val isActive = index == activeLineIdx
+                        // Constant font size: changing it per-line makes item heights jump
+                        // under the auto-scroll and the list jitters.
                         Text(
                             line.text,
                             fontFamily = FontMono,
-                            fontSize = if (isActive) 16.sp else 13.sp,
+                            fontSize = 14.sp,
                             fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isActive) TextPrimary else TextSecondary,
+                            color = if (isActive || activeLineIdx < 0) TextPrimary else TextSecondary,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 28.dp, vertical = 10.dp)
@@ -288,7 +299,7 @@ private fun NpHeader(queueIndex: Int, queueSize: Int) {
             .fillMaxWidth()
             .drawBehind {
                 drawLine(
-                    color = Color(0x1F000000),
+                    color = Hairline,
                     start = Offset(0f, size.height),
                     end = Offset(size.width, size.height),
                     strokeWidth = 1f
@@ -354,7 +365,7 @@ private fun NpArtwork(videoId: String, artworkUrl: String?, sizeDp: Int) {
     Box(
         Modifier
             .size(sizeDp.dp)
-            .border(1.dp, Color(0x1A000000))
+            .border(1.dp, Hairline)
     ) {
         NpThumbnail(videoId, artworkUrl, Modifier.fillMaxSize())
         // Reticle corner brackets
@@ -389,10 +400,13 @@ private fun NpThumbnail(videoId: String, artworkUrl: String?, modifier: Modifier
                     "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
                 )
             }
+            // Explicit artwork is trusted at any size; YouTube fallbacks are filtered because
+            // i.ytimg.com serves a 120px placeholder for missing maxresdefault images.
+            val minWidth = if (!artworkUrl.isNullOrBlank()) 1 else 200
             for (url in candidates) {
                 runCatching {
-                    val img = org.jetbrains.skia.Image.makeFromEncoded(URL(url).readBytes())
-                    if (img.width > 200) {
+                    val img = org.jetbrains.skia.Image.makeFromEncoded(npFetchBytes(url))
+                    if (img.width >= minWidth) {
                         bitmap = img.toComposeImageBitmap()
                         return@withContext
                     }
@@ -418,16 +432,48 @@ private fun NpProgress(
     progress: Float,
     position: Double,
     duration: Double,
-    isLoading: Boolean
+    isLoading: Boolean,
+    onSeek: (Float) -> Unit
 ) {
+    // Local scrub state so the bar follows the pointer while dragging
+    var scrubbing by remember { mutableStateOf(false) }
+    var scrubFraction by remember { mutableStateOf(0f) }
+    val shown = if (scrubbing) scrubFraction else progress
+    val seekEnabled = !isLoading && duration > 0.0
+
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
+                // Tall hit target, thin visual bar drawn inside
+                .height(16.dp)
+                .pointerInput(seekEnabled) {
+                    if (!seekEnabled) return@pointerInput
+                    detectTapGestures { offset -> onSeek((offset.x / size.width).coerceIn(0f, 1f)) }
+                }
+                .pointerInput(seekEnabled) {
+                    if (!seekEnabled) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            scrubbing = true
+                            scrubFraction = (offset.x / size.width).coerceIn(0f, 1f)
+                        },
+                        onDragEnd = { scrubbing = false; onSeek(scrubFraction) },
+                        onDragCancel = { scrubbing = false }
+                    ) { change, _ ->
+                        change.consume()
+                        scrubFraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+          Box(
+            Modifier
+                .fillMaxWidth()
                 .height(4.dp)
                 .background(PsInset)
-                .border(1.dp, Color(0x1A000000))
-        ) {
+                .border(1.dp, Hairline)
+          ) {
             if (isLoading) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxSize(),
@@ -438,14 +484,18 @@ private fun NpProgress(
                 // Progress fill — intentionally always PsInk900
                 Box(
                     Modifier
-                        .fillMaxWidth(progress)
+                        .fillMaxWidth(shown)
                         .fillMaxHeight()
                         .background(PsInk900)
                 )
             }
+          }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(npFormatTime(position), fontFamily = FontMono, fontSize = 11.sp, color = TextSecondary)
+            Text(
+                npFormatTime(if (scrubbing) scrubFraction * duration else position),
+                fontFamily = FontMono, fontSize = 11.sp, color = TextSecondary
+            )
             Text(npFormatTime(duration), fontFamily = FontMono, fontSize = 11.sp, color = TextSecondary)
         }
     }
@@ -454,12 +504,13 @@ private fun NpProgress(
 @Composable
 private fun NpQueue(queue: List<QueueItem>, activeIndex: Int, player: FFmpegPlayer, height: Dp, onHeightChange: (Dp) -> Unit) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (activeIndex - 1).coerceAtLeast(0))
+    val autoScroll = rememberUserAwareAutoScroll(listState)
     val density = LocalDensity.current
     val heightRef = rememberUpdatedState(height)
     val callbackRef = rememberUpdatedState(onHeightChange)
 
     LaunchedEffect(activeIndex) {
-        listState.animateScrollToItem((activeIndex - 1).coerceAtLeast(0))
+        autoScroll((activeIndex - 1).coerceAtLeast(0))
     }
 
     Column(
@@ -530,7 +581,8 @@ private fun NpQueue(queue: List<QueueItem>, activeIndex: Int, player: FFmpegPlay
                     item = item,
                     index = index,
                     isActive = index == activeIndex,
-                    onClick = { player.loadQueue(queue, index) }
+                    // jumpTo keeps the current order; loadQueue would reshuffle under the user
+                    onClick = { player.jumpTo(index) }
                 )
             }
         }
@@ -553,7 +605,7 @@ private fun NpQueueRow(item: QueueItem, index: Int, isActive: Boolean, onClick: 
                     )
                 }
                 drawLine(
-                    color = Color(0x0D000000),
+                    color = HairlineSoft,
                     start = Offset(0f, size.height),
                     end = Offset(size.width, size.height),
                     strokeWidth = 1f
@@ -594,6 +646,45 @@ private fun NpQueueRow(item: QueueItem, index: Int, isActive: Boolean, onClick: 
         }
     }
 }
+
+/**
+ * Auto-scroll that yields to the user: after a manual scroll it stays out of the
+ * way for [USER_SCROLL_GRACE_MS] so people can read ahead or browse the queue.
+ */
+private const val USER_SCROLL_GRACE_MS = 6_000L
+
+@Composable
+private fun rememberUserAwareAutoScroll(listState: LazyListState): suspend (Int) -> Unit {
+    var lastUserScrollAt by remember { mutableStateOf(0L) }
+    var programmatic by remember { mutableStateOf(false) }
+
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collectLatest { scrolling ->
+            if (scrolling && !programmatic) lastUserScrollAt = System.currentTimeMillis()
+        }
+    }
+
+    return remember(listState) {
+        val scrollTo: suspend (Int) -> Unit = { index ->
+            if (System.currentTimeMillis() - lastUserScrollAt > USER_SCROLL_GRACE_MS) {
+                programmatic = true
+                try {
+                    listState.animateScrollToItem(index)
+                } finally {
+                    programmatic = false
+                }
+            }
+        }
+        scrollTo
+    }
+}
+
+private fun npFetchBytes(url: String): ByteArray =
+    URI.create(url).toURL().openConnection().run {
+        connectTimeout = 5_000
+        readTimeout = 10_000
+        getInputStream().use { it.readBytes() }
+    }
 
 private fun npFormatTime(seconds: Double): String {
     val s = seconds.toLong().coerceAtLeast(0L)
