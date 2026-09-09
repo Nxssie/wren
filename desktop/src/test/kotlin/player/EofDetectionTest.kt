@@ -70,11 +70,11 @@ class EofDetectionTest {
     // ── Queue item management ──
 
     @Test
-    fun `should load single item and clear queue`() {
+    fun `should load single item into queue`() {
         player.load("http://example.com/stream", "video123", "Test Song")
-        // Queue should be cleared on load
-        assertEquals(0, player.queue.value.size)
-        assertEquals(-1, player.queueIndex.value)
+        // Queue should contain the single item
+        assertEquals(1, player.queue.value.size)
+        assertEquals(0, player.queueIndex.value)
     }
 
     @Test

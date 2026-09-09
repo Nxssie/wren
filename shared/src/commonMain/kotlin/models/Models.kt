@@ -7,26 +7,33 @@ data class QueueItem(
     val url: String,
     val videoId: String,
     val title: String,
-    val artist: String = ""
+    val artist: String = "",
+    val artworkUrl: String? = null,
+    val source: Source = Source.YT_MUSIC,
+    val genre: String? = null
 )
 
 enum class RepeatMode { OFF, ALL, SINGLE }
 
-enum class Source { YT_MUSIC, YOUTUBE }
+enum class Source { YT_MUSIC, YOUTUBE, SOUNDCLOUD }
 
+@Serializable
 data class SearchResult(
     val videoId: String,
     val title: String,
     val artist: String,
-    val artistId: String?,
-    val duration: String,
-    val thumbnailUrl: String,
+    val artistId: String? = null,
+    val duration: String = "",
+    val thumbnailUrl: String = "",
     val source: Source = Source.YT_MUSIC,
-    val viewCount: Long? = null
+    val viewCount: Long? = null,
+    val soundcloudId: Long? = null,
+    val genre: String? = null
 ) {
     val url: String get() = when (source) {
-        Source.YT_MUSIC -> "https://music.youtube.com/watch?v=$videoId"
-        Source.YOUTUBE  -> "https://www.youtube.com/watch?v=$videoId"
+        Source.YT_MUSIC    -> "https://music.youtube.com/watch?v=$videoId"
+        Source.YOUTUBE     -> "https://www.youtube.com/watch?v=$videoId"
+        Source.SOUNDCLOUD  -> videoId
     }
 }
 
@@ -68,6 +75,16 @@ data class PlaylistTrack(
 ) {
     val url get() = "https://music.youtube.com/watch?v=$videoId"
 }
+
+fun SearchResult.toQueueItem() = QueueItem(
+    url = url,
+    videoId = videoId,
+    title = title,
+    artist = artist,
+    artworkUrl = if (source == Source.SOUNDCLOUD) thumbnailUrl else null,
+    source = source,
+    genre = genre
+)
 
 data class LyricLine(val timeMs: Long, val text: String)
 data class LyricsResult(val lines: List<LyricLine>, val synced: Boolean)
