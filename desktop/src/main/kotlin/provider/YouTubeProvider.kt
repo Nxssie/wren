@@ -24,6 +24,11 @@ object YouTubeProvider : MusicProvider {
     override val supportsStations = true    // per-track radio via the RDAMVM mix
     override val supportsLibrary = true
 
+    // YouTube exposes no discovery feed through the Data API; this tab is Wren's own
+    // construct (radios seeded by local plays), so it is named for what it really is.
+    override val discoverLabel = "radios"
+    override val discoverEmptyHint = "youtube_has_no_discovery_feed — play_something_here_to_seed_radios"
+
     override suspend fun search(query: String, limit: Int): List<SearchResult> =
         YoutubeMusic.search(query, limit)
 
@@ -52,7 +57,11 @@ object YouTubeProvider : MusicProvider {
                 artworkUrl = it.artworkUrl ?: "https://i.ytimg.com/vi/${it.trackId}/hqdefault.jpg"
             )
         }
-        return listOf(DiscoverSection(title = "radios from recent plays", caption = "seeded by your last plays", collections = radios))
+        return listOf(DiscoverSection(
+            title = "radios from recent plays",
+            caption = "built by wren from your plays here — youtube offers no discovery feed",
+            collections = radios
+        ))
     }
 
     override suspend fun collectionTracks(collectionId: String): List<SearchResult> = youtubeRadio(collectionId)

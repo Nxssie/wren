@@ -22,6 +22,8 @@ object SoundCloudProvider : MusicProvider {
     override val supportsStations = true
     override val supportsLibrary = true
 
+    override val discoverEmptyHint = "sign_in_or_play_something_to_seed_discover"
+
     private const val LIKES_ID = "likes"
 
     override suspend fun search(query: String, limit: Int): List<SearchResult> =

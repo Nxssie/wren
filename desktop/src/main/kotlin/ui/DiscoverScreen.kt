@@ -90,7 +90,7 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
                     )
                 }
             } else {
-                Text("${provider.platform.label} discover;", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("${provider.platform.label} ${provider.discoverLabel};", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { load(force = true) }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = TextPrimary)
@@ -126,7 +126,8 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
                 Text("// ${provider.platform.label}_unavailable;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
             }
             current.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("// play_something_first_to_seed_discover;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
+                Text("// ${provider.discoverEmptyHint};", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono,
+                    modifier = Modifier.padding(horizontal = 24.dp))
             }
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 current.forEachIndexed { sIdx, section ->
