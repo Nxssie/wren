@@ -1,15 +1,14 @@
 package api
 
-import auth.AuthManager
+import auth.GoogleAuth
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import models.ArtistResult
 import models.SearchResult
-import models.Source
 
 object YoutubeMusic {
     suspend fun searchArtists(query: String): List<ArtistResult> = coroutineScope {
-        if (AuthManager.isAuthenticated) AuthManager.ensureValidToken()
+        if (GoogleAuth.isAuthenticated) GoogleAuth.ensureValidToken()
         val filtered = async { searchYouTubeMusicArtists(query) }
         val general = async { searchYouTubeMusicArtistsFromGeneral(query) }
         // Merge: prefer general's entry (has listener count) over filtered's when both exist
@@ -20,15 +19,13 @@ object YoutubeMusic {
     }
 
     suspend fun search(query: String, limit: Int = 20): List<SearchResult> = coroutineScope {
-        if (AuthManager.isAuthenticated) AuthManager.ensureValidToken()
+        if (GoogleAuth.isAuthenticated) GoogleAuth.ensureValidToken()
         val music = async { searchYouTubeMusic(query, limit) }
         val video = async { searchYouTube(query, limit) }
-        val soundcloud = async { SoundCloud.searchTracks(query, limit) }
-        val combined = interleave(interleave(music.await(), video.await()), soundcloud.await())
-        if (!AuthManager.isAuthenticated) return@coroutineScope combined
-        val ytIds = combined.filter { it.source != Source.SOUNDCLOUD }.map { it.videoId }
-        val counts = fetchViewCounts(ytIds)
-        combined.map { if (it.source != Source.SOUNDCLOUD) it.copy(viewCount = counts[it.videoId]) else it }
+        val combined = interleave(music.await(), video.await())
+        if (!GoogleAuth.isAuthenticated) return@coroutineScope combined
+        val counts = fetchViewCounts(combined.map { it.videoId })
+        combined.map { it.copy(viewCount = counts[it.videoId]) }
     }
 }
 
