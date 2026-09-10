@@ -7,28 +7,33 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import models.Playlist
 import models.PlaylistTrack
+import util.Http
 
-private val ytApiClient = HttpClient.newHttpClient()
 private val ytApiJson = Json { ignoreUnknownKeys = true }
+
+private fun ytApiGet(url: String, token: String) =
+    Http.get(url, headers = mapOf("Authorization" to "Bearer $token"))
+
+private val playlistHeaders = mapOf(
+    "Content-Type" to "application/json",
+    "X-YouTube-Client-Name" to "67",
+    "X-YouTube-Client-Version" to "1.20220918.01.00",
+    "Origin" to "https://music.youtube.com",
+    "Referer" to "https://music.youtube.com/",
+    "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+)
 
 suspend fun fetchUserPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
     GoogleAuth.ensureValidToken()
     val token = GoogleAuth.accessToken ?: return@withContext emptyList()
-    val response = ytApiClient.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50"))
-            .header("Authorization", "Bearer $token")
-            .GET().build(),
-        HttpResponse.BodyHandlers.ofString()
+    val response = ytApiGet(
+        "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50",
+        token,
     )
-    if (response.statusCode() != 200) return@withContext emptyList()
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+    if (response.code != 200) return@withContext emptyList()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
         ?: return@withContext emptyList()
     val playlists = root["items"]?.jsonArray?.mapNotNull { item ->
         val obj = item.jsonObject
@@ -69,24 +74,16 @@ private suspend fun fetchPlaylistCoverFromBrowse(playlistId: String): String? = 
     }.toString()
 
     val response = runCatching {
-        ytApiClient.send(
-            HttpRequest.newBuilder()
-                .uri(URI.create("https://music.youtube.com/youtubei/v1/browse?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false"))
-                .header("Content-Type", "application/json")
-                .header("X-YouTube-Client-Name", "67")
-                .header("X-YouTube-Client-Version", "1.20220918.01.00")
-                .header("Origin", "https://music.youtube.com")
-                .header("Referer", "https://music.youtube.com/")
-                .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build(),
-            HttpResponse.BodyHandlers.ofString()
+        Http.post(
+            "https://music.youtube.com/youtubei/v1/browse?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false",
+            body,
+            headers = playlistHeaders,
         )
     }.getOrNull() ?: return@withContext null
 
-    if (response.statusCode() != 200) return@withContext null
+    if (response.code != 200) return@withContext null
 
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
         ?: return@withContext null
 
     // The playlist cover lives in the header renderer — handle all known header types
@@ -124,14 +121,11 @@ private suspend fun fetchPlaylistCoverFromBrowse(playlistId: String): String? = 
 
 suspend fun fetchPlaylistTracks(playlistId: String): List<PlaylistTrack> = withContext(Dispatchers.IO) {
     val token = GoogleAuth.accessToken ?: return@withContext emptyList()
-    val response = ytApiClient.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=$playlistId&maxResults=50"))
-            .header("Authorization", "Bearer $token")
-            .GET().build(),
-        HttpResponse.BodyHandlers.ofString()
+    val response = ytApiGet(
+        "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=$playlistId&maxResults=50",
+        token,
     )
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
         ?: return@withContext emptyList()
     val tracks = root["items"]?.jsonArray?.mapNotNull { item ->
         val snippet = item.jsonObject["snippet"]?.jsonObject ?: return@mapNotNull null
@@ -150,14 +144,11 @@ suspend fun fetchPlaylistTracks(playlistId: String): List<PlaylistTrack> = withC
 
     if (tracks.isEmpty()) return@withContext tracks
     val ids = tracks.joinToString(",") { it.videoId }
-    val durResponse = ytApiClient.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$ids"))
-            .header("Authorization", "Bearer $token")
-            .GET().build(),
-        HttpResponse.BodyHandlers.ofString()
+    val durResponse = ytApiGet(
+        "https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=$ids",
+        token,
     )
-    val durRoot = runCatching { ytApiJson.parseToJsonElement(durResponse.body()).jsonObject }.getOrNull()
+    val durRoot = runCatching { ytApiJson.parseToJsonElement(durResponse.body).jsonObject }.getOrNull()
     val durMap = durRoot?.get("items")?.jsonArray?.associate { item ->
         val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: ""
         val iso = item.jsonObject["contentDetails"]?.jsonObject?.get("duration")?.jsonPrimitive?.content ?: ""
@@ -171,14 +162,11 @@ suspend fun fetchSubscriberCounts(channelIds: List<String>): Map<String, Long> =
     if (channelIds.isEmpty()) return@withContext emptyMap()
     val token = GoogleAuth.accessToken ?: return@withContext emptyMap()
     val ids = channelIds.joinToString(",")
-    val response = ytApiClient.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://www.googleapis.com/youtube/v3/channels?part=statistics&id=$ids"))
-            .header("Authorization", "Bearer $token")
-            .GET().build(),
-        HttpResponse.BodyHandlers.ofString()
+    val response = ytApiGet(
+        "https://www.googleapis.com/youtube/v3/channels?part=statistics&id=$ids",
+        token,
     )
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
         ?: return@withContext emptyMap()
     root["items"]?.jsonArray?.associate { item ->
         val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: ""
@@ -192,14 +180,11 @@ suspend fun fetchViewCounts(videoIds: List<String>): Map<String, Long> = withCon
     if (videoIds.isEmpty()) return@withContext emptyMap()
     val token = GoogleAuth.accessToken ?: return@withContext emptyMap()
     val ids = videoIds.joinToString(",")
-    val response = ytApiClient.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://www.googleapis.com/youtube/v3/videos?part=statistics&id=$ids"))
-            .header("Authorization", "Bearer $token")
-            .GET().build(),
-        HttpResponse.BodyHandlers.ofString()
+    val response = ytApiGet(
+        "https://www.googleapis.com/youtube/v3/videos?part=statistics&id=$ids",
+        token,
     )
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body()).jsonObject }.getOrNull()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
         ?: return@withContext emptyMap()
     root["items"]?.jsonArray?.associate { item ->
         val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: ""

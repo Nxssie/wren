@@ -5,6 +5,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import models.QueueItem
 import models.Source
+import util.AppDirs
 import util.Log
 import java.io.File
 
@@ -21,8 +22,7 @@ data class PlayRecord(
 )
 
 object ListeningHistory {
-    private val configDir = File(System.getProperty("user.home"), ".config/wren")
-    private val historyFile = File(configDir, "history.json")
+    private val historyFile get() = File(AppDirs.config, "history.json")
     private val json = Json { ignoreUnknownKeys = true }
     private const val MAX_ENTRIES = 500
 
@@ -75,7 +75,7 @@ object ListeningHistory {
     }.onFailure { Log.e("ListeningHistory", "Failed to load history", it) }.getOrDefault(emptyList())
 
     private fun save(entries: List<PlayRecord>) {
-        configDir.mkdirs()
+        AppDirs.config.mkdirs()
         runCatching {
             historyFile.writeText(json.encodeToString(ListSerializer(PlayRecord.serializer()), entries))
         }.onFailure { Log.e("ListeningHistory", "Failed to save history", it) }

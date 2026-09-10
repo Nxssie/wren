@@ -11,17 +11,19 @@ import java.time.format.DateTimeFormatter
  * otherwise lost, which is exactly why past crashes left no trace.
  */
 object Log {
-    private val stateDir = File(System.getProperty("user.home"), ".local/state/wren")
-    private val logFile = File(stateDir, "wren.log")
     private val timestampFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
-    private val writer: PrintWriter? = runCatching {
-        stateDir.mkdirs()
-        if (logFile.exists() && logFile.length() > 0) {
-            logFile.copyTo(File(stateDir, "wren.log.1"), overwrite = true)
-        }
-        PrintWriter(logFile.outputStream(), true)
-    }.getOrNull()
+    private val writer: PrintWriter? by lazy {
+        runCatching {
+            val stateDir = AppDirs.state
+            stateDir.mkdirs()
+            val logFile = File(stateDir, "wren.log")
+            if (logFile.exists() && logFile.length() > 0) {
+                logFile.copyTo(File(stateDir, "wren.log.1"), overwrite = true)
+            }
+            PrintWriter(logFile.outputStream(), true)
+        }.getOrNull()
+    }
 
     @Synchronized
     private fun write(level: String, tag: String, msg: String, throwable: Throwable?) {

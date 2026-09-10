@@ -4,19 +4,27 @@ import auth.GoogleAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import models.ArtistResult
 import models.SearchResult
 import models.Source
+import util.Http
 
-private val client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
 private val json = Json { ignoreUnknownKeys = true }
 
 // API_KEY removed — use ApiKeyManager.ytMusicKey instead
 private const val CLIENT_VERSION = "1.20220918.01.00"
+
+private val musicHeaders = mapOf(
+    "Content-Type" to "application/json",
+    "X-YouTube-Client-Name" to "67",
+    "X-YouTube-Client-Version" to CLIENT_VERSION,
+    "Origin" to "https://music.youtube.com",
+    "Referer" to "https://music.youtube.com/",
+    "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+)
+
+private fun musicSearchUrl() =
+    "https://music.youtube.com/youtubei/v1/search?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false"
 private const val SONGS_PARAMS   = "Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo="
 private const val ARTISTS_PARAMS = "Eg-KAQwIBRABGAAgASgAMABqChAEEAMQCRAFEAo="
 
@@ -33,24 +41,9 @@ suspend fun searchYouTubeMusic(query: String, limit: Int): List<SearchResult> = 
         put("params", SONGS_PARAMS)
     }.toString()
 
-    val reqBuilder = HttpRequest.newBuilder()
-        .uri(URI.create("https://music.youtube.com/youtubei/v1/search?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false"))
-        .header("Content-Type", "application/json")
-        .header("X-YouTube-Client-Name", "67")
-        .header("X-YouTube-Client-Version", CLIENT_VERSION)
-        .header("Origin", "https://music.youtube.com")
-        .header("Referer", "https://music.youtube.com/")
-        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-
     // OAuth token not sent — InnerTube rejects tokens from unrecognized clients
-
-    val response = client.send(
-        reqBuilder.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
-        HttpResponse.BodyHandlers.ofString()
-    )
-
-    val results = parseResults(response.body(), limit)
-    results
+    val response = Http.post(musicSearchUrl(), body, headers = musicHeaders)
+    parseResults(response.body, limit)
 }
 
 private fun parseResults(body: String, limit: Int): List<SearchResult> {
@@ -109,21 +102,7 @@ suspend fun searchYouTubeMusicArtists(query: String): List<ArtistResult> = withC
         put("params", ARTISTS_PARAMS)
     }.toString()
 
-    val response = client.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://music.youtube.com/youtubei/v1/search?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false"))
-            .header("Content-Type", "application/json")
-            .header("X-YouTube-Client-Name", "67")
-            .header("X-YouTube-Client-Version", CLIENT_VERSION)
-            .header("Origin", "https://music.youtube.com")
-            .header("Referer", "https://music.youtube.com/")
-            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build(),
-        HttpResponse.BodyHandlers.ofString()
-    )
-
-    parseArtistResults(response.body())
+    parseArtistResults(Http.post(musicSearchUrl(), body, headers = musicHeaders).body)
 }
 
 suspend fun searchYouTubeMusicArtistsFromGeneral(query: String): List<ArtistResult> = withContext(Dispatchers.IO) {
@@ -138,21 +117,7 @@ suspend fun searchYouTubeMusicArtistsFromGeneral(query: String): List<ArtistResu
         put("query", query)
     }.toString()
 
-    val response = client.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://music.youtube.com/youtubei/v1/search?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false"))
-            .header("Content-Type", "application/json")
-            .header("X-YouTube-Client-Name", "67")
-            .header("X-YouTube-Client-Version", CLIENT_VERSION)
-            .header("Origin", "https://music.youtube.com")
-            .header("Referer", "https://music.youtube.com/")
-            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build(),
-        HttpResponse.BodyHandlers.ofString()
-    )
-
-    parseArtistsFromGeneralSearch(response.body())
+    parseArtistsFromGeneralSearch(Http.post(musicSearchUrl(), body, headers = musicHeaders).body)
 }
 
 private fun parseArtistsFromGeneralSearch(body: String): List<ArtistResult> {

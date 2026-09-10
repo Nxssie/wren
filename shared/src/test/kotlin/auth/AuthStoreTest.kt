@@ -3,6 +3,7 @@ package auth
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import util.AppDirs
 import java.io.File
 
 class AuthStoreTest {
@@ -11,12 +12,8 @@ class AuthStoreTest {
     lateinit var tempDir: File
 
     private fun withTempConfig(block: () -> Unit) {
-        val old = System.getProperty("wren.config.dir")
-        System.setProperty("wren.config.dir", tempDir.absolutePath)
-        try { block() } finally {
-            if (old != null) System.setProperty("wren.config.dir", old)
-            else System.clearProperty("wren.config.dir")
-        }
+        AppDirs.init(configDir = tempDir, stateDir = File(tempDir, "state"))
+        block()
     }
 
     @Test

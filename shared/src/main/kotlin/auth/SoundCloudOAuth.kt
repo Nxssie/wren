@@ -3,14 +3,11 @@ package auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import util.Http
 import util.Log
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 import java.util.Base64
 import java.util.UUID
 
@@ -32,10 +29,6 @@ object SoundCloudOAuth {
     /** The web player's application id, sent as `app_id` so the auth UI renders the sign-in view. */
     private const val WEB_APP_ID = 46941
 
-    private val http = HttpClient.newBuilder()
-        .version(HttpClient.Version.HTTP_1_1)
-        .connectTimeout(Duration.ofSeconds(10))
-        .build()
     private val json = Json { ignoreUnknownKeys = true }
 
     data class AuthRequest(
@@ -111,21 +104,22 @@ object SoundCloudOAuth {
     }
 
     private fun postToken(body: String, query: String): Tokens {
-        val req = HttpRequest.newBuilder(URI.create(TOKEN_URL + query))
-            .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-            .header("Accept", "application/json")
-            .header("Origin", "https://soundcloud.com")
-            .header("Referer", "https://soundcloud.com/")
-            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
-            .timeout(Duration.ofSeconds(15))
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build()
-        val resp = http.send(req, HttpResponse.BodyHandlers.ofString())
-        if (resp.statusCode() !in 200..299) {
-            Log.w(TAG, "token endpoint returned ${resp.statusCode()}: ${resp.body().take(300)}")
-            throw IllegalStateException("SoundCloud token exchange failed (${resp.statusCode()})")
+        val resp = Http.post(
+            TOKEN_URL + query,
+            body,
+            contentType = "application/x-www-form-urlencoded; charset=UTF-8",
+            headers = mapOf(
+                "Accept" to "application/json",
+                "Origin" to "https://soundcloud.com",
+                "Referer" to "https://soundcloud.com/",
+                "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+            ),
+        )
+        if (!resp.isSuccessful) {
+            Log.w(TAG, "token endpoint returned ${resp.code}: ${resp.body.take(300)}")
+            throw IllegalStateException("SoundCloud token exchange failed (${resp.code})")
         }
-        return parseTokens(resp.body())
+        return parseTokens(resp.body)
     }
 
     internal fun parseTokens(body: String): Tokens {

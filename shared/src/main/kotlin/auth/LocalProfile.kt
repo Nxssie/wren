@@ -6,16 +6,14 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import util.AppDirs
 import util.Log
 import java.io.File
 import java.util.UUID
 
 // ── Configurable root ────────────────────────────────────────────────────────
 
-private val configDir: File
-    get() = System.getProperty("wren.config.dir")
-        ?.let { File(it) }
-        ?: File(System.getProperty("user.home"), ".config/wren")
+private val configDir: File get() = AppDirs.config
 
 private fun dir(name: String) = File(configDir, name).also { it.mkdirs() }
 
@@ -73,6 +71,7 @@ object AuthStore {
     }
 
     private fun saveProfile(p: LocalProfile) {
+        configDir.mkdirs()
         profileFile.writeText(json.encodeToString(LocalProfile.serializer(), p))
     }
 
@@ -94,12 +93,15 @@ object AuthStore {
 
     fun saveGoogle(session: GoogleSession) {
         googleFile.writeText(json.encodeToString(GoogleSession.serializer(), session))
-        writeYtdlpCache(session)
+        // Desktop-only convenience: yt-dlp reads its YouTube OAuth cache from ~/.cache.
+        // Android has neither yt-dlp nor a writable $HOME, so this must never be fatal.
+        runCatching { writeYtdlpCache(session) }
+            .onFailure { Log.w("AuthStore", "yt-dlp OAuth cache not written (desktop-only path)", it) }
     }
 
     fun disconnectGoogle() {
         googleFile.delete()
-        ytdlpCacheFile.delete()
+        runCatching { ytdlpCacheFile.delete() }
     }
 
     // ── SoundCloud session ───────────────────────────────────────────────────

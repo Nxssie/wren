@@ -3,6 +3,7 @@ package auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import util.Http
 import util.Log
 
 object GoogleAuth {
@@ -59,14 +60,11 @@ object GoogleAuth {
     private fun fetchAndSaveAccountName() {
         runCatching {
             val token = session?.accessToken ?: return
-            val request = java.net.http.HttpRequest.newBuilder()
-                .uri(java.net.URI.create("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true"))
-                .header("Authorization", "Bearer $token")
-                .GET()
-                .build()
-            val response = java.net.http.HttpClient.newHttpClient()
-                .send(request, java.net.http.HttpResponse.BodyHandlers.ofString()).body()
-            val obj = Json { ignoreUnknownKeys = true }.parseToJsonElement(response).jsonObject
+            val response = Http.get(
+                "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
+                headers = mapOf("Authorization" to "Bearer $token"),
+            )
+            val obj = Json { ignoreUnknownKeys = true }.parseToJsonElement(response.body).jsonObject
             val snippet = obj["items"]?.jsonArray?.firstOrNull()?.jsonObject?.get("snippet")?.jsonObject
             val name = snippet?.get("title")?.jsonPrimitive?.content
             val avatar = snippet?.get("thumbnails")?.jsonObject

@@ -5,16 +5,20 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import models.SearchResult
 import models.Source
+import util.Http
 import util.Log
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 
-private val radioClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
 private val radioJson = Json { ignoreUnknownKeys = true }
 private const val RADIO_CLIENT_VERSION = "1.20240101.01.00"
+
+private val radioHeaders = mapOf(
+    "Content-Type" to "application/json",
+    "X-YouTube-Client-Name" to "67",
+    "X-YouTube-Client-Version" to RADIO_CLIENT_VERSION,
+    "Origin" to "https://music.youtube.com",
+    "Referer" to "https://music.youtube.com/",
+    "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+)
 
 /**
  * YouTube Music per-track radio: the `next` endpoint with the `RDAMVM<videoId>` mix
@@ -35,24 +39,18 @@ suspend fun youtubeRadio(videoId: String, limit: Int = 50): List<SearchResult> =
         put("isAudioOnly", true)
     }.toString()
 
-    val req = HttpRequest.newBuilder(URI.create("https://music.youtube.com/youtubei/v1/next?prettyPrint=false"))
-        .header("Content-Type", "application/json")
-        .header("X-YouTube-Client-Name", "67")
-        .header("X-YouTube-Client-Version", RADIO_CLIENT_VERSION)
-        .header("Origin", "https://music.youtube.com")
-        .header("Referer", "https://music.youtube.com/")
-        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-        .timeout(Duration.ofSeconds(12))
-        .POST(HttpRequest.BodyPublishers.ofString(body))
-        .build()
+    val req = Http.post(
+        "https://music.youtube.com/youtubei/v1/next?prettyPrint=false",
+        body,
+        headers = radioHeaders,
+    )
 
     runCatching {
-        val resp = radioClient.send(req, HttpResponse.BodyHandlers.ofString())
-        if (resp.statusCode() !in 200..299) {
-            Log.w("YtMusicRadio", "next returned ${resp.statusCode()} for $videoId")
+        if (!req.isSuccessful) {
+            Log.w("YtMusicRadio", "next returned ${req.code} for $videoId")
             return@runCatching emptyList()
         }
-        parseRadio(resp.body(), limit)
+        parseRadio(req.body, limit)
     }.onFailure { Log.w("YtMusicRadio", "radio failed for $videoId", it) }.getOrDefault(emptyList())
 }
 

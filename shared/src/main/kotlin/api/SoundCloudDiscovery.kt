@@ -3,6 +3,7 @@ package api
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import models.SearchResult
+import util.AppDirs
 import util.Log
 import java.io.File
 import java.time.DayOfWeek
@@ -19,8 +20,8 @@ data class GeneratedDiscovery(
 )
 
 object SoundCloudDiscovery {
-    private val configDir = File(System.getProperty("user.home"), ".config/wren")
-    private val cacheFile = File(configDir, "discovery.json")
+    private val configDir get() = AppDirs.config
+    private val cacheFile get() = File(configDir, "discovery.json")
     private val json = Json { ignoreUnknownKeys = true }
     private const val MAX_TRACKS = 25
 

@@ -3,21 +3,25 @@ package api
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import models.AlbumCard
 import models.ArtistData
 import models.SearchResult
 import models.Source
-
-private val artistHttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
+import util.Http
 
 // ARTIST_API_KEY removed — use ApiKeyManager.ytMusicKey instead
 private const val ARTIST_CLIENT_VERSION = "1.20220918.01.00"
 
-private fun browseRequest(browseId: String): HttpRequest {
+private val artistHeaders = mapOf(
+    "Content-Type" to "application/json",
+    "X-YouTube-Client-Name" to "67",
+    "X-YouTube-Client-Version" to ARTIST_CLIENT_VERSION,
+    "Origin" to "https://music.youtube.com",
+    "Referer" to "https://music.youtube.com/",
+    "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+)
+
+private fun browse(browseId: String): String {
     val body = buildJsonObject {
         putJsonObject("context") {
             putJsonObject("client") {
@@ -29,26 +33,19 @@ private fun browseRequest(browseId: String): HttpRequest {
         put("browseId", browseId)
     }.toString()
 
-    return HttpRequest.newBuilder()
-        .uri(URI.create("https://music.youtube.com/youtubei/v1/browse?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false"))
-        .header("Content-Type", "application/json")
-        .header("X-YouTube-Client-Name", "67")
-        .header("X-YouTube-Client-Version", ARTIST_CLIENT_VERSION)
-        .header("Origin", "https://music.youtube.com")
-        .header("Referer", "https://music.youtube.com/")
-        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-        .POST(HttpRequest.BodyPublishers.ofString(body))
-        .build()
+    return Http.post(
+        "https://music.youtube.com/youtubei/v1/browse?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false",
+        body,
+        headers = artistHeaders,
+    ).body
 }
 
 suspend fun fetchArtistPage(browseId: String): ArtistData? = withContext(Dispatchers.IO) {
-    val body = artistHttpClient.send(browseRequest(browseId), HttpResponse.BodyHandlers.ofString()).body()
-    parseArtistPage(body)
+    parseArtistPage(browse(browseId))
 }
 
 suspend fun fetchAlbumTracks(album: AlbumCard): List<SearchResult> = withContext(Dispatchers.IO) {
-    val body = artistHttpClient.send(browseRequest(album.browseId), HttpResponse.BodyHandlers.ofString()).body()
-    parseAlbumTracks(body, album)
+    parseAlbumTracks(browse(album.browseId), album)
 }
 
 // ── Parsers ──────────────────────────────────────────────────────────────────

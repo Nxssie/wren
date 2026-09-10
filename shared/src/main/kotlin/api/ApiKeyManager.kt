@@ -1,11 +1,11 @@
 package api
 
 import kotlinx.serialization.json.*
+import util.AppDirs
 import java.io.File
 
 object ApiKeyManager {
-    private val configDir = File(System.getProperty("user.home"), ".config/wren")
-    private val apiKeyFile = File(configDir, "api.json")
+    private val apiKeyFile get() = File(AppDirs.config, "api.json")
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -32,7 +32,7 @@ object ApiKeyManager {
     )
 
     fun saveKeys(ytMusicKey: String, youtubeKey: String) {
-        configDir.mkdirs()
+        AppDirs.config.mkdirs()
         apiKeyFile.writeText(
             buildJsonObject {
                 put("ytmusic_key", ytMusicKey)

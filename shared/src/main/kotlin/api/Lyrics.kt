@@ -5,18 +5,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.net.URI
 import java.net.URLEncoder
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 import models.LyricLine
 import models.LyricsResult
+import util.Http
 
-private val lyricsClient = HttpClient.newBuilder()
-    .connectTimeout(Duration.ofSeconds(6))
-    .build()
 private val lyricsJson = Json { ignoreUnknownKeys = true }
 private val lrcRegex = Regex("""\[(\d+):(\d{2})\.(\d+)]\s*(.+)""")
 
@@ -28,14 +21,10 @@ suspend fun fetchLyrics(title: String, artist: String, durationSec: Double): Lyr
             val d = durationSec.toInt()
             val url = "https://lrclib.net/api/get?track_name=$t&artist_name=$a&duration=$d"
 
-            val req = HttpRequest.newBuilder(URI.create(url))
-                .header("Lrclib-Client", "wren/1.0 (desktop)")
-                .GET().build()
+            val resp = Http.get(url, headers = mapOf("Lrclib-Client" to "wren/1.0"))
+            if (resp.code != 200) return@runCatching null
 
-            val resp = lyricsClient.send(req, HttpResponse.BodyHandlers.ofString())
-            if (resp.statusCode() != 200) return@runCatching null
-
-            val obj = lyricsJson.parseToJsonElement(resp.body()).jsonObject
+            val obj = lyricsJson.parseToJsonElement(resp.body).jsonObject
 
             val synced = obj["syncedLyrics"]?.jsonPrimitive?.content
             if (!synced.isNullOrBlank()) {

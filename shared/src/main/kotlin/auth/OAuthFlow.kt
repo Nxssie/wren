@@ -6,17 +6,15 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.serialization.json.*
+import util.AppDirs
+import util.Http
+import util.Log
 import java.net.InetSocketAddress
 import java.net.ServerSocket
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.Random
 
-private val httpClient: HttpClient = HttpClient.newHttpClient()
 private val json = Json { ignoreUnknownKeys = true }
 
 private const val SCOPE = "https://www.googleapis.com/auth/youtube"
@@ -31,7 +29,7 @@ private fun redirectUri(port: Int) = "http://localhost:$port"
 private var pendingCallback: ServerSocket? = null
 private val pendingLock = Any()
 
-private val credentialsFile = java.io.File(System.getProperty("user.home"), ".config/wren/oauth.json")
+private val credentialsFile get() = java.io.File(AppDirs.config, "oauth.json")
 
 data class OAuthCredentials(val clientId: String, val clientSecret: String)
 
@@ -89,7 +87,7 @@ fun loadCredentials(): OAuthCredentials? = loadCredentialsFile() ?: bundledCrede
 val hasGoogleCredentials: Boolean get() = loadCredentials() != null
 
 private fun bundledCredentials(): OAuthCredentials? =
-    OAuthCredentials(BuildConfig.GOOGLE_CLIENT_ID, BuildConfig.GOOGLE_CLIENT_SECRET)
+    OAuthCredentials(OAuthConfig.clientId, OAuthConfig.clientSecret)
         .takeIf { it.clientId.isNotBlank() && it.clientSecret.isNotBlank() }
 
 private fun loadCredentialsFile(): OAuthCredentials? = runCatching {
@@ -209,13 +207,7 @@ suspend fun refreshToken(refreshToken: String): OAuthTokens = withContext(Dispat
     )
 }
 
-private fun post(url: String, body: String): String {
-    val request = HttpRequest.newBuilder()
-        .uri(URI.create(url))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .POST(HttpRequest.BodyPublishers.ofString(body))
-        .build()
-    return httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body()
-}
+private fun post(url: String, body: String): String =
+    Http.post(url, body, contentType = "application/x-www-form-urlencoded").body
 
 private fun encode(value: String) = java.net.URLEncoder.encode(value, "UTF-8")

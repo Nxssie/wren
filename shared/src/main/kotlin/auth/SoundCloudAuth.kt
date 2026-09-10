@@ -3,17 +3,8 @@ package auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import util.Http
 import util.Log
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
-
-private val scAuthClient = HttpClient.newBuilder()
-    .version(HttpClient.Version.HTTP_1_1)
-    .connectTimeout(Duration.ofSeconds(10))
-    .build()
 
 private val scAuthJson = Json { ignoreUnknownKeys = true }
 private const val SC_AUTH_UA =
@@ -98,26 +89,21 @@ object SoundCloudAuth {
     }
 
     private fun fetchMeV2(token: String): MeResult? = runCatching {
-        val req = HttpRequest.newBuilder(URI.create("https://api-v2.soundcloud.com/me"))
-            .header("Authorization", "OAuth $token")
-            .header("User-Agent", SC_AUTH_UA)
-            .GET()
-            .timeout(Duration.ofSeconds(10))
-            .build()
-        val resp = scAuthClient.send(req, HttpResponse.BodyHandlers.ofString())
-        if (resp.statusCode() !in 200..299) return@runCatching null
-        parseMe(resp.body())
+        val resp = Http.get(
+            "https://api-v2.soundcloud.com/me",
+            headers = mapOf("Authorization" to "OAuth $token", "User-Agent" to SC_AUTH_UA),
+        )
+        if (!resp.isSuccessful) return@runCatching null
+        parseMe(resp.body)
     }.onFailure { Log.w("SoundCloudAuth", "api-v2 /me failed", it) }.getOrNull()
 
     private fun fetchMeLegacy(token: String): MeResult? = runCatching {
-        val req = HttpRequest.newBuilder(URI.create("https://api.soundcloud.com/me?oauth_token=$token"))
-            .header("User-Agent", SC_AUTH_UA)
-            .GET()
-            .timeout(Duration.ofSeconds(10))
-            .build()
-        val resp = scAuthClient.send(req, HttpResponse.BodyHandlers.ofString())
-        if (resp.statusCode() !in 200..299) return@runCatching null
-        parseMe(resp.body())
+        val resp = Http.get(
+            "https://api.soundcloud.com/me?oauth_token=$token",
+            headers = mapOf("User-Agent" to SC_AUTH_UA),
+        )
+        if (!resp.isSuccessful) return@runCatching null
+        parseMe(resp.body)
     }.onFailure { Log.w("SoundCloudAuth", "legacy /me failed", it) }.getOrNull()
 
     internal fun parseMe(body: String): MeResult? = runCatching {

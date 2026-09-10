@@ -3,18 +3,23 @@ package api
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import models.SearchResult
 import models.Source
+import util.Http
 
-private val ytClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
 private val ytJson = Json { ignoreUnknownKeys = true }
 
 // YT_API_KEY removed — use ApiKeyManager.youtubeKey instead
 private const val YT_CLIENT_VERSION = "2.20240101.00.00"
+
+private val ytHeaders = mapOf(
+    "Content-Type" to "application/json",
+    "X-YouTube-Client-Name" to "1",
+    "X-YouTube-Client-Version" to YT_CLIENT_VERSION,
+    "Origin" to "https://www.youtube.com",
+    "Referer" to "https://www.youtube.com/",
+    "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+)
 
 suspend fun searchYouTube(query: String, limit: Int): List<SearchResult> = withContext(Dispatchers.IO) {
     val body = buildJsonObject {
@@ -28,21 +33,13 @@ suspend fun searchYouTube(query: String, limit: Int): List<SearchResult> = withC
         put("query", query)
     }.toString()
 
-    val response = ytClient.send(
-        HttpRequest.newBuilder()
-            .uri(URI.create("https://www.youtube.com/youtubei/v1/search?key=${ApiKeyManager.youtubeKey}&prettyPrint=false"))
-            .header("Content-Type", "application/json")
-            .header("X-YouTube-Client-Name", "1")
-            .header("X-YouTube-Client-Version", YT_CLIENT_VERSION)
-            .header("Origin", "https://www.youtube.com")
-            .header("Referer", "https://www.youtube.com/")
-            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build(),
-        HttpResponse.BodyHandlers.ofString()
+    val response = Http.post(
+        "https://www.youtube.com/youtubei/v1/search?key=${ApiKeyManager.youtubeKey}&prettyPrint=false",
+        body,
+        headers = ytHeaders,
     )
 
-    parseYtResults(response.body(), limit)
+    parseYtResults(response.body, limit)
 }
 
 private fun parseYtResults(body: String, limit: Int): List<SearchResult> {

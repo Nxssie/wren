@@ -7,19 +7,11 @@ import kotlinx.serialization.json.*
 import models.Playlist
 import models.SearchResult
 import models.Source
+import util.AppDirs
+import util.Http
 import util.Log
 import java.io.File
-import java.net.URI
 import java.net.URLEncoder
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
-
-private val scClient = HttpClient.newBuilder()
-    .version(HttpClient.Version.HTTP_1_1)
-    .connectTimeout(Duration.ofSeconds(8))
-    .build()
 
 private val scJson = Json { ignoreUnknownKeys = true }
 private const val SC_USER_AGENT =
@@ -28,8 +20,7 @@ private const val SC_SEARCH_PARAMS = "Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo="
 
 // ── Client ID management ──────────────────────────────────────────────────────
 
-private val configDir = File(System.getProperty("user.home"), ".config/wren")
-private val scConfigFile = File(configDir, "soundcloud.json")
+private val scConfigFile get() = File(AppDirs.config, "soundcloud.json")
 
 @Volatile private var cachedClientId: String? = null
 @Volatile private var clientIdFetchedAt: Long = 0L
@@ -90,13 +81,8 @@ internal fun invalidateClientId() {
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 private fun httpGet(url: String): String? {
-    val req = HttpRequest.newBuilder(URI.create(url))
-        .header("User-Agent", SC_USER_AGENT)
-        .GET()
-        .timeout(Duration.ofSeconds(10))
-        .build()
-    val resp = scClient.send(req, HttpResponse.BodyHandlers.ofString())
-    return if (resp.statusCode() in 200..299) resp.body() else null
+    val resp = Http.get(url, headers = mapOf("User-Agent" to SC_USER_AGENT))
+    return if (resp.isSuccessful) resp.body else null
 }
 
 private const val SC_BASE = "https://api-v2.soundcloud.com"
@@ -129,15 +115,13 @@ internal suspend fun scGetJsonElement(path: String): JsonElement? {
 private data class JsonResp(val status: Int, val body: JsonElement)
 
 private fun httpGetJson(url: String, token: String? = null): JsonResp? = runCatching {
-    val req = HttpRequest.newBuilder(URI.create(url))
-        .header("User-Agent", SC_USER_AGENT)
-        .apply { if (token != null) header("Authorization", "OAuth $token") }
-        .GET()
-        .timeout(Duration.ofSeconds(10))
-        .build()
-    val resp = scClient.send(req, HttpResponse.BodyHandlers.ofString())
-    val body = if (resp.body().isNotBlank()) scJson.parseToJsonElement(resp.body()) else buildJsonObject {}
-    JsonResp(resp.statusCode(), body)
+    val headers = buildMap {
+        put("User-Agent", SC_USER_AGENT)
+        if (token != null) put("Authorization", "OAuth $token")
+    }
+    val resp = Http.get(url, headers)
+    val body = if (resp.body.isNotBlank()) scJson.parseToJsonElement(resp.body) else buildJsonObject {}
+    JsonResp(resp.code, body)
 }.getOrNull()
 
 // ── Public API ────────────────────────────────────────────────────────────────
