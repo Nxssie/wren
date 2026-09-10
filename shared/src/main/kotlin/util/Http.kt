@@ -43,6 +43,20 @@ object Http {
             .build()
     )
 
+    /** Any other verb (PUT/DELETE…); [body] is sent as JSON when present, else empty. */
+    fun request(
+        method: String,
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        body: String? = null,
+    ): Response = execute(
+        Request.Builder()
+            .url(url)
+            .apply { headers.forEach { (name, value) -> header(name, value) } }
+            .method(method, body?.toRequestBody("application/json".toMediaTypeOrNull()) ?: ByteArray(0).toRequestBody(null))
+            .build()
+    )
+
     private fun execute(request: Request): Response =
         client.newCall(request).execute().use { Response(it.code, it.body?.string().orEmpty()) }
 }

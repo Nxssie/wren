@@ -13,6 +13,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.runtime.Composable
@@ -61,6 +63,8 @@ fun TrackRow(
     actionDescription: String = "Start radio",
     onDownload: (() -> Unit)? = null,
     downloadState: DownloadManager.State? = null,
+    liked: Boolean? = null,
+    onLike: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -93,12 +97,25 @@ fun TrackRow(
         if (trailingLabel != null) {
             Text(trailingLabel, color = PsSteel400, fontFamily = FontMono, fontSize = 12.sp)
         }
+        if (onLike != null) LikeButton(liked == true, onLike)
         if (onDownload != null) DownloadButton(downloadState, onDownload)
         if (onAction != null) {
             IconButton(onClick = onAction) {
                 Icon(actionIcon, contentDescription = actionDescription, tint = TextSecondary)
             }
         }
+    }
+}
+
+/** Heart toggle for SoundCloud likes; filled and cyan when the track is liked. */
+@Composable
+fun LikeButton(liked: Boolean, onClick: () -> Unit, tint: androidx.compose.ui.graphics.Color = TextSecondary) {
+    IconButton(onClick = onClick) {
+        Icon(
+            if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            contentDescription = if (liked) "Remove from liked" else "Add to liked",
+            tint = if (liked) PsIrisCyan else tint,
+        )
     }
 }
 

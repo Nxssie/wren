@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import api.SoundCloudLikes
 import api.fetchLyrics
+import auth.SoundCloudAuth
 import coil.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
 import com.wren.app.util.artworkFor
@@ -97,13 +99,18 @@ fun NowPlayingScreen(engine: PlayerEngine) {
     val repeatMode by engine.repeatMode.collectAsState()
     val queueTitle by engine.queueTitle.collectAsState()
     val downloads by DownloadManager.states.collectAsState()
+    val likedSet by SoundCloudLikes.liked.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     val item = queue.getOrNull(index)
     val artworkUrl = artworkFor(item)
     // Only SoundCloud tracks can be saved (YouTube streams are not ours to keep).
     val download: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD }?.let { track ->
         { DownloadManager.enqueue(track, downloadsDestination(context)) }
+    }
+    val like: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD && SoundCloudAuth.isAuthenticated }?.let { track ->
+        { scope.launch { SoundCloudLikes.toggle(track.url) } }
     }
 
     var lyrics by remember(item?.videoId) { mutableStateOf<LyricsResult?>(null) }
@@ -216,6 +223,8 @@ fun NowPlayingScreen(engine: PlayerEngine) {
                 lyrics = lyrics,
                 onDownload = download,
                 downloadState = item?.let { downloads[it.url] },
+                liked = item?.let { it.url in likedSet } ?: false,
+                onLike = like,
                 position = position,
                 duration = duration,
                 isPlaying = isPlaying,
@@ -427,6 +436,8 @@ private fun PlayerPane(
     lyrics: LyricsResult?,
     onDownload: (() -> Unit)?,
     downloadState: DownloadManager.State?,
+    liked: Boolean,
+    onLike: (() -> Unit)?,
     position: Double,
     duration: Double,
     isPlaying: Boolean,
@@ -464,10 +475,11 @@ private fun PlayerPane(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (onDownload != null) {
-                    Spacer(Modifier.width(8.dp))
-                    DownloadButton(downloadState, onDownload, tint = TextPrimary)
+                if (onLike != null) {
+                    Spacer(Modifier.width(4.dp))
+                    LikeButton(liked, onLike, tint = TextPrimary)
                 }
+                if (onDownload != null) DownloadButton(downloadState, onDownload, tint = TextPrimary)
             }
             Spacer(Modifier.height(12.dp))
 

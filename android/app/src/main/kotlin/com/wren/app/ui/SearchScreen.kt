@@ -25,7 +25,9 @@ import models.Source
 import models.toQueueItem
 import player.PlayerEngine
 import provider.MusicProvider
+import api.SoundCloudLikes
 import api.resolveStreamUrl
+import provider.Platform
 
 @Composable
 fun SearchScreen(
@@ -41,6 +43,8 @@ fun SearchScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val downloads by DownloadManager.states.collectAsState()
+    val liked by SoundCloudLikes.liked.collectAsState()
+    val canLike = provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
 
     fun doSearch() {
         if (query.isBlank()) return
@@ -116,6 +120,10 @@ fun SearchScreen(
                             { DownloadManager.enqueue(item.toQueueItem(), downloadsDestination(context)) }
                         } else null,
                         downloadState = downloads[item.url],
+                        liked = if (canLike) item.url in liked else null,
+                        onLike = if (canLike) {
+                            { scope.launch { SoundCloudLikes.toggle(item.url, item.soundcloudId) } }
+                        } else null,
                     )
                 }
             }

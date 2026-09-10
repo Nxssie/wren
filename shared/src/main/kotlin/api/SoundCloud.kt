@@ -251,6 +251,51 @@ object SoundCloud {
             } ?: emptyList()
     }
 
+    /**
+     * Every liked track as permalink → id, following `next_href` so the set is complete
+     * (the UI keys likes by permalink because that is what QueueItem carries).
+     */
+    suspend fun userLikeIds(userId: Long): Map<String, Long> = withContext(Dispatchers.IO) {
+        val out = LinkedHashMap<String, Long>()
+        var path: String? = "/users/$userId/track_likes?limit=200"
+        var pages = 0
+        while (path != null && pages++ < 25) {
+            val root = scGetJson(path) ?: break
+            root["collection"]?.jsonArray?.forEach { item ->
+                val track = item.jsonObject["track"]?.jsonObject ?: return@forEach
+                val id = track["id"]?.jsonPrimitive?.longOrNull ?: return@forEach
+                val permalink = track["permalink_url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                out[permalink] = id
+            }
+            path = root["next_href"]?.jsonPrimitive?.contentOrNull?.removePrefix(SC_BASE)
+        }
+        out
+    }
+
+    /** Numeric id behind a track permalink, for items that only carry the URL. */
+    suspend fun resolveTrackId(permalink: String): Long? = withContext(Dispatchers.IO) {
+        val encoded = java.net.URLEncoder.encode(permalink, "UTF-8")
+        scGetJson("/resolve?url=$encoded")?.get("id")?.jsonPrimitive?.longOrNull
+    }
+
+    /** Like or unlike [trackId] for the signed-in user. False when there is no session or the call failed. */
+    suspend fun setLiked(trackId: Long, liked: Boolean): Boolean = withContext(Dispatchers.IO) {
+        SoundCloudAuth.ensureValidToken()
+        val userId = SoundCloudAuth.userId ?: return@withContext false
+        val token = SoundCloudAuth.accessToken ?: return@withContext false
+        val clientId = scClientId()
+        val resp = runCatching {
+            Http.request(
+                method = if (liked) "PUT" else "DELETE",
+                url = "$SC_BASE/users/$userId/track_likes/$trackId?client_id=$clientId",
+                headers = mapOf("User-Agent" to SC_USER_AGENT, "Authorization" to "OAuth $token"),
+            )
+        }.onFailure { Log.e("SoundCloud", "like request failed for $trackId", it) }.getOrNull()
+        val ok = resp != null && resp.code in 200..299
+        if (!ok) Log.w("SoundCloud", "like ${if (liked) "PUT" else "DELETE"} $trackId -> ${resp?.code}")
+        ok
+    }
+
     // ── Internals ────────────────────────────────────────────────────────────
 
     private fun parseTrackCollection(arr: JsonArray?): List<SearchResult> =

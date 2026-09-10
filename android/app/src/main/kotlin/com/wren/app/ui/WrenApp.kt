@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import api.SoundCloudLikes
 import auth.AuthEvents
 import player.PlayerEngine
 import provider.Platform
@@ -68,6 +69,9 @@ fun WrenApp(engine: PlayerEngine) {
     var artistSearchName by remember { mutableStateOf<String?>(null) }
     val authVersion by AuthEvents.version.collectAsState()
     val provider = remember(platform) { Providers.of(platform) }
+
+    // Likes follow the SoundCloud session: load on start, reload/clear on sign in/out.
+    LaunchedEffect(authVersion) { SoundCloudLikes.refresh() }
 
     // Outermost back handler: screens register their own (collapse sheet, leave playlist,
     // close login) and win while enabled; this one only runs once those are exhausted.
