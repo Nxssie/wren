@@ -227,6 +227,30 @@ object SoundCloud {
         } ?: emptyList()
     }
 
+    /**
+     * Playlists from other users that [userId] saved (liked). The response nests the full
+     * playlist under `playlist`, unlike [userPlaylists] which returns them directly.
+     */
+    suspend fun userSavedPlaylists(userId: Long, limit: Int = 50): List<Playlist> = withContext(Dispatchers.IO) {
+        val root = scGetJson("/users/$userId/playlist_likes?limit=$limit") ?: return@withContext emptyList()
+        root["collection"]?.jsonArray
+            ?.mapNotNull { item ->
+                val obj = item.jsonObject["playlist"]?.jsonObject ?: item.jsonObject
+                val collection = parseCollection(obj) ?: return@mapNotNull null
+                val owner = obj["user"]?.jsonObject?.get("username")?.jsonPrimitive?.contentOrNull
+                collection to owner
+            }
+            ?.distinctBy { it.first.id }
+            ?.map { (collection, owner) ->
+                Playlist(
+                    id = collection.id,
+                    title = if (owner != null) "${collection.title} · by $owner" else collection.title,
+                    itemCount = collection.trackCount,
+                    thumbnailUrl = collection.artworkUrl ?: ""
+                )
+            } ?: emptyList()
+    }
+
     // ── Internals ────────────────────────────────────────────────────────────
 
     private fun parseTrackCollection(arr: JsonArray?): List<SearchResult> =

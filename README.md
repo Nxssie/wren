@@ -24,6 +24,7 @@
 - Discover per platform: SoundCloud "Made for you" mixes, curated and trending selections plus a weekly list generated from your listening history; YouTube radios seeded by your recent plays
 - Artist pages with top songs, albums, singles, and EPs
 - Queue playback with automatic prefetching of upcoming tracks
+- Download SoundCloud tracks as local audio files (mp3/m4a) straight from the search results
 - Google OAuth login to access your YouTube Music playlists and library
 - Popularity-based artist sorting using monthly listener counts parsed directly from the YTMusic API
 - Now Playing screen with synced/plain lyrics (from [lrclib.net](https://lrclib.net)) and resizable queue panel
@@ -246,5 +247,9 @@ Wren ships with default API keys for YouTube Search and InnerTube. To use your o
 Keys in this file override the built-in defaults.
 
 ## Notes
+
+Downloads are saved to `~/Music/Wren` on desktop (falling back to the app state dir when
+`~/Music` is not writable) and to `Android/data/com.wren.app/files/Music` on Android. No
+extra binary is required — the audio is copied from the same stream URL the player uses.
 
 This project uses YouTube's internal InnerTube API, which is not publicly documented or officially supported for third-party use. It may break without notice if YouTube changes their API structure. No content is redistributed — the app streams directly from YouTube's CDN.
