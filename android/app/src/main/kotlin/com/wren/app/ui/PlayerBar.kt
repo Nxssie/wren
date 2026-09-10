@@ -14,6 +14,9 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import com.wren.app.player.ExoPlayerEngine
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +35,7 @@ fun PlayerBar(engine: PlayerEngine, onOpen: () -> Unit) {
     val duration by engine.duration.collectAsState()
 
     val item = queue.getOrNull(index)
+    val error by (engine as? ExoPlayerEngine)?.lastError?.collectAsState() ?: remember { mutableStateOf(null) }
     val progress = if (duration > 0) (position / duration).toFloat().coerceIn(0f, 1f) else 0f
 
     Column(
@@ -61,8 +65,9 @@ fun PlayerBar(engine: PlayerEngine, onOpen: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    item?.artist.orEmpty(),
-                    color = TextSecondary,
+                    error ?: item?.artist.orEmpty(),
+                    color = if (error != null) PsSignalDanger else TextSecondary,
+                    fontFamily = if (error != null) FontMono else null,
                     fontSize = 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

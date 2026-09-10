@@ -21,13 +21,15 @@ interface PlayerEngine {
     val displayTitle: StateFlow<String>
     val queue: StateFlow<List<QueueItem>>
     val queueIndex: StateFlow<Int>
+    /** Where the queue came from (playlist, mix, search…), for a "playing from" caption. */
+    val queueTitle: StateFlow<String?>
     val shuffle: StateFlow<Boolean>
     val repeatMode: StateFlow<RepeatMode>
 
     fun start()
     fun stop()
     fun load(url: String, videoId: String, title: String = "")
-    fun loadQueue(items: List<QueueItem>, startIndex: Int = 0)
+    fun loadQueue(items: List<QueueItem>, startIndex: Int = 0, title: String? = null)
     fun jumpTo(index: Int)
     fun clearQueue()
     fun toggleShuffle()

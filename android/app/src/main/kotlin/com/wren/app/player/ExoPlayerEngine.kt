@@ -4,6 +4,12 @@ import android.content.Context
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import api.StreamRequestHeaders
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import util.Http
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -36,9 +42,38 @@ import util.Log
  */
 class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackControls {
 
+    /** Shares the resolver's connection pool; logs media requests so 403s can be diagnosed. */
+    private val streamHttpClient = Http.client.newBuilder()
+        .addNetworkInterceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+            if (!response.isSuccessful) {
+                Log.w(
+                    "ExoPlayerEngine",
+                    "media ${request.method} ${request.url.host}${request.url.encodedPath} -> ${response.code}\n" +
+                        request.headers.joinToString("\n") { (k, v) -> "  $k: $v" },
+                )
+            }
+            response
+        }
+        .build()
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // Same OkHttp client that resolved the URL, and the user agent of the InnerTube client
+    // that issued it: googlevideo 403s when the media request does not look like the
+    // client that asked for the URL, which is how "nothing plays" with no visible error.
     private val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setMediaSourceFactory(
+            DefaultMediaSourceFactory(
+                DataSource.Factory {
+                    ResolvingDataSource(OkHttpDataSource.Factory(streamHttpClient).createDataSource()) { spec ->
+                        val userAgent = StreamRequestHeaders.userAgentFor(spec.uri.toString())
+                        if (userAgent == null) spec else spec.withAdditionalHeaders(mapOf("User-Agent" to userAgent))
+                    }
+                },
+            ),
+        )
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -60,8 +95,10 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     private val _displayTitle = MutableStateFlow("")
     private val _queue = MutableStateFlow<List<QueueItem>>(emptyList())
     private val _queueIndex = MutableStateFlow(-1)
+    private val _queueTitle = MutableStateFlow<String?>(null)
     private val _shuffle = MutableStateFlow(false)
     private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
+    private val _lastError = MutableStateFlow<String?>(null)
 
     override val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
     override val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -74,8 +111,11 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     override val displayTitle: StateFlow<String> = _displayTitle.asStateFlow()
     override val queue: StateFlow<List<QueueItem>> = _queue.asStateFlow()
     override val queueIndex: StateFlow<Int> = _queueIndex.asStateFlow()
+    override val queueTitle: StateFlow<String?> = _queueTitle.asStateFlow()
     override val shuffle: StateFlow<Boolean> = _shuffle.asStateFlow()
     override val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
+    /** Short, human-readable reason the last track could not play; cleared on the next success. */
+    val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
     private var consecutiveLoadFailures = 0
     private val maxConsecutiveLoadFailures = 3
@@ -97,6 +137,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
             override fun onPlayerError(error: PlaybackException) {
                 Log.e("ExoPlayerEngine", "Playback error for ${current()?.videoId}", error)
+                _lastError.value = "playback failed: ${error.errorCodeName.removePrefix("ERROR_CODE_").lowercase()}"
                 consecutiveLoadFailures++
                 if (consecutiveLoadFailures > maxConsecutiveLoadFailures) {
                     Log.e("ExoPlayerEngine", "Giving up after $consecutiveLoadFailures consecutive failures")
@@ -149,10 +190,11 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         playIndex(0)
     }
 
-    override fun loadQueue(items: List<QueueItem>, startIndex: Int) {
+    override fun loadQueue(items: List<QueueItem>, startIndex: Int, title: String?) {
         if (items.isEmpty()) return
         val ordered = if (_shuffle.value && items.size > 1) items.shuffled() else items
         _queue.value = ordered
+        _queueTitle.value = title?.takeIf { it.isNotBlank() }
         _queueIndex.value = startIndex.coerceIn(0, ordered.lastIndex)
         playIndex(_queueIndex.value)
         WrenPlaybackService.start(context)
@@ -165,6 +207,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     /** Drops everything after the current item; playback keeps going untouched. */
     override fun clearQueue() {
+        _queueTitle.value = null
         val item = current()
         if (item == null) {
             _queue.value = emptyList()
@@ -281,6 +324,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             if (url == null) {
                 // item.url is a watch page, not a stream — never hand it to the player.
                 Log.e("ExoPlayerEngine", "No stream URL for ${item.videoId}; skipping")
+                _lastError.value = "no stream for ${item.title.ifBlank { item.videoId }}"
                 _isLoading.value = false
                 _isEnqueuing.value = false
                 advance(force = true)
@@ -291,6 +335,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             player.prepare()
             player.play()
             consecutiveLoadFailures = 0
+            _lastError.value = null
             ListeningHistory.record(item)
             WrenPlaybackService.start(context)
             prefetch(index + 1)
