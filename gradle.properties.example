@@ -2,3 +2,7 @@
 # Example (sdkman): /home/<user>/.sdkman/candidates/java/21.0.10-amzn
 # Leave empty to use the JDK on your PATH.
 #org.gradle.java.home=
+
+# Android
+android.useAndroidX=true
+org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8

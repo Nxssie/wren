@@ -1,13 +1,22 @@
 import api.warmupStreamConnection
 import auth.AuthStore
+import auth.OAuthConfig
 import androidx.compose.ui.window.application
 import ui.AppWindow
+import util.AppDirs
 import util.Log
+import java.io.File
 
 fun main() {
+    AppDirs.init(
+        configDir = File(System.getProperty("user.home"), ".config/wren"),
+        stateDir = File(System.getProperty("user.home"), ".local/state/wren"),
+    )
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         Log.e("Uncaught", "Uncaught exception on thread '${thread.name}'", throwable)
     }
+    OAuthConfig.clientId = BuildConfig.GOOGLE_CLIENT_ID
+    OAuthConfig.clientSecret = BuildConfig.GOOGLE_CLIENT_SECRET
     Log.i("Main", "Wren starting (pid=${ProcessHandle.current().pid()})")
     AuthStore.migrateLegacy()
     applyUiScale().let { scale ->

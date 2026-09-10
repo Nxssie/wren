@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Wren" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Dark by default so the first frame matches the in-app theme (no white flash). -->
+    <style name="Theme.Wren" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#050507</item>
+        <item name="android:statusBarColor">#050507</item>
+        <item name="android:navigationBarColor">#050507</item>
+    </style>
 </resources>

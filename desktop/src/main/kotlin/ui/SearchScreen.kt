@@ -11,7 +11,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
@@ -36,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import models.SearchResult
 import api.resolveStreamUrl
+import download.DownloadManager
 import provider.MusicProvider
 import provider.Platform
 import provider.Providers
@@ -47,6 +51,7 @@ import kotlinx.coroutines.withContext
 import player.FFmpegPlayer
 import models.QueueItem
 import models.toQueueItem
+import util.downloadDestination
 import java.net.URL
 
 /** [youtubeOnly] orders exist because YouTube merges the Music and video catalogs. */
@@ -255,6 +260,8 @@ fun TrackRow(
     val rowProvider = remember(result.source) { Providers.of(result.source) }
     val scope = rememberCoroutineScope()
     var buildingStation by remember { mutableStateOf(false) }
+    val downloads by DownloadManager.states.collectAsState()
+    val downloadState = downloads[result.url]
 
     Row(
         modifier = Modifier
@@ -339,6 +346,40 @@ fun TrackRow(
                     Icon(
                         Icons.Default.Radio,
                         contentDescription = "Start station",
+                        tint = PsSteel400,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+        }
+        if (result.source == Source.SOUNDCLOUD) {
+            IconButton(
+                onClick = { DownloadManager.enqueue(result.toQueueItem(), downloadDestination()) },
+                enabled = downloadState !is DownloadManager.State.Downloading,
+                modifier = Modifier.size(28.dp)
+            ) {
+                when (downloadState) {
+                    is DownloadManager.State.Downloading -> CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = PsIrisCyan,
+                        strokeWidth = 1.5.dp
+                    )
+                    is DownloadManager.State.Done -> Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = "Downloaded",
+                        tint = PsIrisCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    is DownloadManager.State.Failed -> Icon(
+                        Icons.Default.ErrorOutline,
+                        contentDescription = "Download failed, tap to retry",
+                        tint = PsSignalDanger,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    null -> Icon(
+                        Icons.Default.Download,
+                        contentDescription = "Download",
                         tint = PsSteel400,
                         modifier = Modifier.size(18.dp)
                     )
