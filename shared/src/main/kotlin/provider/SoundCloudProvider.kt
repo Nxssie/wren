@@ -3,6 +3,8 @@ package provider
 import api.SoundCloud
 import api.SoundCloudDiscovery
 import auth.SoundCloudAuth
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
@@ -66,27 +68,37 @@ object SoundCloudProvider : MusicProvider {
     override suspend fun collectionTracks(collectionId: String): List<SearchResult> =
         SoundCloud.collectionTracks(collectionId)
 
-    // ── Library: likes + own playlists, needs the session's user id ─────────
+    // ── Library: likes + own playlists + playlists saved from other users ───
 
     override suspend fun playlists(): List<Playlist> {
         val userId = SoundCloudAuth.userId ?: return emptyList()
         val likes = Playlist(id = LIKES_ID, title = "Liked tracks", itemCount = 0, thumbnailUrl = SoundCloudAuth.avatarUrl ?: "")
-        val own = runCatching { SoundCloud.userPlaylists(userId) }.getOrDefault(emptyList())
-        return listOf(likes) + own
+        return coroutineScope {
+            val own = async { runCatching { SoundCloud.userPlaylists(userId) }.getOrDefault(emptyList()) }
+            val saved = async { runCatching { SoundCloud.userSavedPlaylists(userId) }.getOrDefault(emptyList()) }
+            val owned = own.await()
+            val savedElsewhere = saved.await().filter { candidate -> owned.none { it.id == candidate.id } }
+            listOf(likes) + owned + savedElsewhere
+        }
     }
 
     override suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> {
         val userId = SoundCloudAuth.userId ?: return emptyList()
         val tracks = if (playlistId == LIKES_ID) SoundCloud.userLikes(userId) else SoundCloud.collectionTracks(playlistId)
-        return tracks.map {
-            PlaylistTrack(
-                videoId = it.videoId,
-                title = it.title,
-                channelTitle = it.artist,
-                thumbnailUrl = it.thumbnailUrl,
-                duration = it.duration,
-                source = Source.SOUNDCLOUD
-            )
-        }
+        return tracks.map { it.toPlaylistTrack() }
+    }
+
+    override suspend fun librarySongs(): List<PlaylistTrack> {
+        val userId = SoundCloudAuth.userId ?: return emptyList()
+        return SoundCloud.userLikes(userId).map { it.toPlaylistTrack() }
     }
 }
+
+private fun SearchResult.toPlaylistTrack() = PlaylistTrack(
+    videoId = videoId,
+    title = title,
+    channelTitle = artist,
+    thumbnailUrl = thumbnailUrl,
+    duration = duration,
+    source = Source.SOUNDCLOUD
+)

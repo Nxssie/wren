@@ -2,7 +2,9 @@ package provider
 
 import api.ListeningHistory
 import api.YoutubeMusic
+import api.fetchLikedSongs
 import api.fetchPlaylistTracks
+import api.fetchSubscribedChannels
 import api.fetchUserPlaylists
 import api.youtubeRadio
 import auth.GoogleAuth
@@ -69,4 +71,8 @@ object YouTubeProvider : MusicProvider {
     override suspend fun playlists(): List<Playlist> = fetchUserPlaylists()
 
     override suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> = fetchPlaylistTracks(playlistId)
+
+    override suspend fun librarySongs(): List<PlaylistTrack> = fetchLikedSongs()
+
+    override suspend fun libraryArtists(): List<ArtistResult> = fetchSubscribedChannels()
 }

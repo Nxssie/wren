@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import models.ArtistResult
 import models.Playlist
 import models.PlaylistTrack
 import api.resolveStreamUrl
@@ -27,9 +28,29 @@ import kotlinx.coroutines.launch
 import player.FFmpegPlayer
 import models.toQueueItem
 
+private enum class LibraryTab(val code: String, val label: String) {
+    SONGS("SNG", "songs"),
+    PLAYLISTS("PLS", "playlists"),
+    ARTISTS("ART", "artists");
+
+    companion object {
+        fun forProvider(provider: MusicProvider): List<LibraryTab> =
+            entries.filter { it != ARTISTS || provider.supportsArtists }
+    }
+}
+
 @Composable
-fun LibraryScreen(provider: MusicProvider, player: FFmpegPlayer) {
+fun LibraryScreen(
+    provider: MusicProvider,
+    player: FFmpegPlayer,
+    onArtistClick: (browseId: String, name: String) -> Unit
+) {
+    val tabs = remember(provider) { LibraryTab.forProvider(provider) }
+    var tab by remember { mutableStateOf(tabs.first()) }
+
+    var songs by remember { mutableStateOf<List<PlaylistTrack>?>(null) }
     var playlists by remember { mutableStateOf<List<Playlist>?>(null) }
+    var artists by remember { mutableStateOf<List<ArtistResult>?>(null) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
     var tracks by remember { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -48,14 +69,28 @@ fun LibraryScreen(provider: MusicProvider, player: FFmpegPlayer) {
         return
     }
 
-    LaunchedEffect(Unit) {
-        loading = true
-        playlists = runCatching { provider.playlists() }.getOrDefault(emptyList())
-        loading = false
+    LaunchedEffect(tab) {
+        if (tab == LibraryTab.SONGS && songs == null) {
+            loading = true
+            songs = runCatching { provider.librarySongs() }.getOrDefault(emptyList())
+            loading = false
+            songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
+        }
+        if (tab == LibraryTab.PLAYLISTS && playlists == null) {
+            loading = true
+            playlists = runCatching { provider.playlists() }.getOrDefault(emptyList())
+            loading = false
+        }
+        if (tab == LibraryTab.ARTISTS && artists == null) {
+            loading = true
+            artists = runCatching { provider.libraryArtists() }.getOrDefault(emptyList())
+            loading = false
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
-        if (selectedPlaylist != null) {
+        val openPlaylist = selectedPlaylist
+        if (openPlaylist != null) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -74,47 +109,126 @@ fun LibraryScreen(provider: MusicProvider, player: FFmpegPlayer) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
                 Spacer(Modifier.width(4.dp))
-                Text(selectedPlaylist!!.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(openPlaylist.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
             if (loading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = PsInk900)
                 }
             } else {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                     items(tracks.size) { index -> PlaylistTrackRow(tracks[index], index, tracks, player) }
                 }
             }
-        } else {
-            if (loading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = PsInk900)
-                }
-            } else if (playlists?.isEmpty() == true) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("// no_playlists_found;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
-                }
-            } else {
-                LazyColumn(
-                    Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
-                    items(playlists ?: emptyList()) { playlist ->
-                        PlaylistRow(playlist) {
-                            selectedPlaylist = playlist
-                            scope.launch {
-                                loading = true
-                                tracks = runCatching { provider.playlistTracks(playlist.id) }.getOrDefault(emptyList())
-                                loading = false
-                                tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
-                            }
-                        }
-                    }
+            return@Column
+        }
+
+        LibraryTabs(tabs, tab) { tab = it }
+
+        when (tab) {
+            LibraryTab.SONGS -> TrackList(songs, loading, player, "// no_liked_songs;")
+            LibraryTab.PLAYLISTS -> PlaylistList(playlists, loading) { playlist ->
+                selectedPlaylist = playlist
+                scope.launch {
+                    loading = true
+                    tracks = runCatching { provider.playlistTracks(playlist.id) }.getOrDefault(emptyList())
+                    loading = false
+                    tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
                 }
             }
+            LibraryTab.ARTISTS -> ArtistList(artists, loading, onArtistClick)
+        }
+    }
+}
+
+@Composable
+private fun LibraryTabs(
+    tabs: List<LibraryTab>,
+    selected: LibraryTab,
+    onSelect: (LibraryTab) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .background(if (globalDark) PsGraphite700 else PsPearl100)
+            .padding(2.dp)
+    ) {
+        tabs.forEach { item ->
+            val active = item == selected
+            Row(
+                Modifier
+                    .weight(1f)
+                    .background(if (active) PsWhite else Color.Transparent)
+                    .clickable { onSelect(item) }
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    item.code,
+                    color = if (active) PsInk900 else PsSteel400,
+                    fontFamily = FontMono,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.4.sp
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    item.label,
+                    color = if (active) PsInk900 else PsSteel400,
+                    fontFamily = FontMono,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.4.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackList(list: List<PlaylistTrack>?, loading: Boolean, player: FFmpegPlayer, emptyHint: String) {
+    if (loading) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = PsInk900)
+        }
+    } else if (list.isNullOrEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(emptyHint, color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
+        }
+    } else {
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            items(list.size) { index -> PlaylistTrackRow(list[index], index, list, player) }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playlist) -> Unit) {
+    when {
+        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = PsInk900)
+        }
+        list.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("// no_playlists_found;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
+        }
+        else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            items(list) { playlist -> PlaylistRow(playlist) { onOpen(playlist) } }
+        }
+    }
+}
+
+@Composable
+private fun ArtistList(list: List<ArtistResult>?, loading: Boolean, onArtistClick: (browseId: String, name: String) -> Unit) {
+    when {
+        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = PsInk900)
+        }
+        list.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("// no_followed_artists;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
+        }
+        else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            items(list) { artist -> ArtistRow(artist, onArtistClick) }
         }
     }
 }

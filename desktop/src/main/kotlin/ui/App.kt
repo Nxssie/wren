@@ -155,7 +155,13 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
                                 )
                             }
                             selectedTab == 1 -> key(platform) { DiscoverScreen(provider, player) }
-                            selectedTab == 2 -> key(platform) { LibraryScreen(provider, player) }
+                            selectedTab == 2 -> key(platform) {
+                                LibraryScreen(
+                                    provider = provider,
+                                    player = player,
+                                    onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
+                                )
+                            }
                             selectedTab == 3 -> NowPlayingScreen(player)
                         }
                     }

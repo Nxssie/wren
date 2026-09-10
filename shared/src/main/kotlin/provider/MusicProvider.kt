@@ -72,6 +72,11 @@ interface MusicProvider {
 
     suspend fun playlists(): List<Playlist> = emptyList()
     suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> = emptyList()
+
+    /** The user's liked tracks. Empty when unsupported or unauthenticated. */
+    suspend fun librarySongs(): List<PlaylistTrack> = emptyList()
+    /** Artists behind the user's library (follows/subscriptions). Empty when unsupported. */
+    suspend fun libraryArtists(): List<ArtistResult> = emptyList()
 }
 
 object Providers {
