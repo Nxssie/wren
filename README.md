@@ -6,7 +6,8 @@
 
 <p align="center">
   A native desktop music player built with Kotlin and Compose Desktop.<br/>
-  Searches and streams audio from YouTube Music, YouTube, and SoundCloud — no ads, login optional.
+  Searches and streams audio from YouTube Music, YouTube, and SoundCloud — no ads, login optional.<br/>
+  An Android app shares the same API, auth and provider code.
 </p>
 
 <p align="center">
@@ -43,45 +44,57 @@
 
 ## Architecture
 
-Wren is split into Gradle modules: `desktop` is the shipping Linux app today, `shared` holds
-domain models reused by future targets, and `android` is an early, unfinished scaffold.
+Wren is split into Gradle modules: `shared` holds everything platform-agnostic (models, API
+clients, auth, providers, HTTP), `desktop` is the shipping Linux app, and `android` is the
+Android app (search, streaming and queue; sessions come later).
 
 ```
-shared/src/commonMain/kotlin/
-└── models/
-    └── Models.kt             # Domain models (SearchResult, QueueItem, Playlist, ...)
-
-desktop/src/main/kotlin/
+shared/src/main/kotlin/
+├── models/Models.kt          # Domain models (SearchResult, QueueItem, Playlist, ...)
 ├── api/
 │   ├── YoutubeMusic.kt       # Public facade — search, artist lookup
 │   ├── YtMusicSearch.kt      # InnerTube search parsing (songs + artists)
 │   ├── YtMusicArtist.kt      # Artist page + album track parsing
 │   ├── YtMusicPlaylists.kt   # YouTube Data API v3 (playlists, view counts)
-│   ├── YtMusicStream.kt      # Stream URL resolution + cache
+│   ├── YtMusicRadio.kt       # Per-track YouTube Music radio
 │   ├── YtSearch.kt           # YouTube (non-Music) video search
+│   ├── SoundCloud.kt         # SoundCloud search/stations/library (client_id scrape)
+│   ├── SoundCloudDiscovery.kt# SoundCloud weekly discovery
 │   ├── Lyrics.kt             # Synced/plain lyrics from lrclib.net
-│   └── ApiKeyManager.kt      # API key management with config file fallback
+│   ├── ListeningHistory.kt   # Local play history (feeds discovery)
+│   ├── ApiKeyManager.kt      # API key management with config file fallback
+│   ├── StreamResolver.kt     # Stream URL cache + pluggable resolver
+│   ├── YtDlpResolver.kt      # Desktop resolver (yt-dlp)
+│   └── HttpStreamResolver.kt # Android resolver (InnerTube player + SoundCloud progressive)
 ├── auth/
-│   ├── AuthManager.kt        # Token lifecycle, yt-dlp cache sync
-│   └── OAuthFlow.kt          # Auth URL, local redirect server, token exchange
-├── player/
-│   └── FFmpegPlayer.kt       # in-process FFmpeg decoder + Java Sound API playback
-├── ui/
-│   ├── App.kt                # Window, sidebar, platform switcher, navigation
-│   ├── SearchScreen.kt       # Search UI, sort dropdown, artist rows
-│   ├── ArtistScreen.kt       # Artist page UI
-│   ├── LibraryScreen.kt      # Playlist library
-│   ├── NowPlayingScreen.kt   # Now Playing with lyrics + queue
-│   ├── PlayerBar.kt          # Persistent playback controls
-│   ├── DiscoverScreen.kt     # Platform-scoped discover: sections, collection cards, inline open
-│   ├── ProfileDialog.kt      # Local profile + Google/SoundCloud sessions
-│   └── SoundCloudLoginWindow.kt # Embedded WebView sign-in for SoundCloud
+│   ├── LocalProfile.kt       # Local profile + Google/SoundCloud session store
+│   ├── GoogleAuth.kt         # Google session lifecycle
+│   ├── OAuthFlow.kt          # Auth URL, loopback redirect, token exchange
+│   ├── SoundCloudAuth.kt     # SoundCloud session lifecycle
+│   ├── SoundCloudOAuth.kt    # SoundCloud PKCE flow
+│   └── AuthEvents.kt         # Change notifications for Compose
 ├── provider/
 │   ├── MusicProvider.kt      # Platform abstraction: search, discover, station, library
 │   ├── YouTubeProvider.kt    # YouTube + YouTube Music behind one provider (radio, library)
 │   └── SoundCloudProvider.kt # SoundCloud provider (stations, selections, likes, playlists)
+├── player/PlayerEngine.kt    # Transport + observable state contract
 └── util/
-    └── Log.kt                # File logger (~/.local/state/wren/wren.log) for diagnostics
+    ├── AppDirs.kt            # Per-platform config/state directories
+    ├── Http.kt               # OkHttp helper (java.net.http needs Android 13+)
+    └── Log.kt                # File logger for diagnostics
+
+desktop/src/main/kotlin/
+├── player/FFmpegPlayer.kt    # in-process FFmpeg decoder + Java Sound API playback
+├── ui/                       # Compose Desktop UI (window, screens, dialogs)
+├── util/Browser.kt           # Opens URLs in the system browser
+└── main.kt                   # Entry point, UI scale detection
+
+android/app/src/main/kotlin/com/wren/app/
+├── MainActivity.kt           # Compose host
+├── WrenApplication.kt        # AppDirs + stream resolver wiring
+├── player/ExoPlayerEngine.kt # Media3/ExoPlayer PlayerEngine implementation
+├── playback/                 # Foreground service + transport notification
+└── ui/                       # Compose UI (search, discover, now playing, player bar)
 ```
 
 ## Requirements
@@ -113,6 +126,33 @@ cp gradle.properties.example gradle.properties
 ./gradlew :desktop:packageDeb
 ./gradlew :desktop:packageRpm
 ```
+
+## Android
+
+The Android app (API 26+) covers the desktop experience without sessions yet: search across
+YouTube/YouTube Music and SoundCloud, streaming playback with a foreground notification,
+queue, discover and lyrics.
+
+```bash
+# Build the debug APK
+./gradlew :android:app:assembleDebug
+
+# Install on a connected device or emulator
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
+and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).
+
+Playback differs from desktop:
+
+- Streams are resolved over HTTP — InnerTube's `player` endpoint with the `ANDROID_VR`
+  client, and SoundCloud progressive transcodings — because Android cannot spawn `yt-dlp`.
+- YouTube answers `Sign in to confirm you're not a bot` for some tracks (typically gated /
+  label-restricted music videos, more often from datacenter IPs). Those tracks fall back to
+  skipping in the queue. SoundCloud playback is unaffected.
+- Google and SoundCloud sign-in are a later phase; connecting sessions currently lives in the
+  desktop app.
 
 ## SoundCloud (no login required)
 
