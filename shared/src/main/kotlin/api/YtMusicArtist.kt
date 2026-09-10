@@ -44,6 +44,18 @@ suspend fun fetchArtistPage(browseId: String): ArtistData? = withContext(Dispatc
     parseArtistPage(browse(browseId))
 }
 
+/**
+ * Whether a UC channel id is a YouTube Music artist. Artists get the immersive header on
+ * music.youtube.com; ordinary channels (vloggers, labels' upload channels, podcasts) get
+ * the plain visual header, which is what lets the Library skip them.
+ */
+suspend fun isMusicArtist(browseId: String): Boolean = withContext(Dispatchers.IO) {
+    runCatching {
+        val root = Json { ignoreUnknownKeys = true }.parseToJsonElement(browse(browseId)).jsonObject
+        root["header"]?.jsonObject?.containsKey("musicImmersiveHeaderRenderer") == true
+    }.getOrDefault(false)
+}
+
 suspend fun fetchAlbumTracks(album: AlbumCard): List<SearchResult> = withContext(Dispatchers.IO) {
     parseAlbumTracks(browse(album.browseId), album)
 }
