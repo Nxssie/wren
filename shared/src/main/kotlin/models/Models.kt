@@ -63,7 +63,9 @@ data class Playlist(
     val id: String,
     val title: String,
     val itemCount: Int,
-    val thumbnailUrl: String
+    val thumbnailUrl: String,
+    /** Channel name when the playlist belongs to someone else but is saved by the user. */
+    val owner: String? = null
 )
 
 data class PlaylistTrack(

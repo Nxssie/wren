@@ -199,7 +199,8 @@ private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playl
             items(list, key = { it.id }) { playlist ->
                 TrackRow(
                     title = playlist.title,
-                    subtitle = "${playlist.itemCount} songs",
+                    subtitle = playlist.owner?.let { "${playlist.itemCount} songs · $it" }
+                        ?: "${playlist.itemCount} songs",
                     artworkUrl = playlist.thumbnailUrl.ifBlank { null },
                     onClick = { onOpen(playlist) },
                 )

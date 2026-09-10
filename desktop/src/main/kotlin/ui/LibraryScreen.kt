@@ -254,7 +254,13 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(playlist.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${playlist.itemCount} songs", color = TextSecondary, fontSize = 12.sp)
+            Text(
+                playlist.owner?.let { "${playlist.itemCount} songs · $it" } ?: "${playlist.itemCount} songs",
+                color = TextSecondary,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
