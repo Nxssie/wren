@@ -5,10 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.runtime.Composable
@@ -22,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import download.DownloadManager
 import models.QueueItem
 import models.SearchResult
 
@@ -54,6 +59,8 @@ fun TrackRow(
     onAction: (() -> Unit)? = null,
     actionIcon: ImageVector = Icons.Default.Radio,
     actionDescription: String = "Start radio",
+    onDownload: (() -> Unit)? = null,
+    downloadState: DownloadManager.State? = null,
 ) {
     Row(
         modifier = Modifier
@@ -86,10 +93,44 @@ fun TrackRow(
         if (trailingLabel != null) {
             Text(trailingLabel, color = PsSteel400, fontFamily = FontMono, fontSize = 12.sp)
         }
+        if (onDownload != null) DownloadButton(downloadState, onDownload)
         if (onAction != null) {
             IconButton(onClick = onAction) {
                 Icon(actionIcon, contentDescription = actionDescription, tint = TextSecondary)
             }
+        }
+    }
+}
+
+/** Download action that reflects the [DownloadManager] state of the track it stands for. */
+@Composable
+fun DownloadButton(
+    state: DownloadManager.State?,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color = TextSecondary,
+) {
+    IconButton(onClick = onClick, enabled = state !is DownloadManager.State.Downloading) {
+        when (state) {
+            is DownloadManager.State.Downloading -> CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = PsIrisCyan,
+                strokeWidth = 1.5.dp,
+            )
+            is DownloadManager.State.Done -> Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = "Downloaded",
+                tint = PsIrisCyan,
+            )
+            is DownloadManager.State.Failed -> Icon(
+                Icons.Default.ErrorOutline,
+                contentDescription = "Download failed, tap to retry",
+                tint = PsSignalDanger,
+            )
+            null -> Icon(
+                Icons.Default.Download,
+                contentDescription = "Download",
+                tint = tint,
+            )
         }
     }
 }

@@ -35,10 +35,10 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
         loading = false
     }
 
-    fun openCollection(id: String) {
+    fun openCollection(collection: DiscoverCollection) {
         scope.launch {
-            val tracks = runCatching { provider.collectionTracks(id) }.getOrDefault(emptyList())
-            if (tracks.isNotEmpty()) engine.loadQueue(tracks.map { it.toQueueItem() }, 0)
+            val tracks = runCatching { provider.collectionTracks(collection.id) }.getOrDefault(emptyList())
+            if (tracks.isNotEmpty()) engine.loadQueue(tracks.map { it.toQueueItem() }, 0, collection.title)
         }
     }
 
@@ -65,7 +65,7 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             items(section.collections, key = { it.id }) { collection ->
-                                CollectionCard(collection) { openCollection(collection.id) }
+                                CollectionCard(collection) { openCollection(collection) }
                             }
                         }
                     }
@@ -78,7 +78,7 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
                         title = item.title,
                         subtitle = item.subtitleText(),
                         artworkUrl = item.thumbnailUrl.ifBlank { null },
-                        onClick = { engine.loadQueue(section.tracks.map { it.toQueueItem() }, index) },
+                        onClick = { engine.loadQueue(section.tracks.map { it.toQueueItem() }, index, section.title) },
                     )
                 }
             }
