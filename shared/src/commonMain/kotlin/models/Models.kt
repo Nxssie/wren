@@ -71,10 +71,25 @@ data class PlaylistTrack(
     val title: String,
     val channelTitle: String,
     val thumbnailUrl: String,
-    val duration: String = ""
+    val duration: String = "",
+    val source: Source = Source.YT_MUSIC
 ) {
-    val url get() = "https://music.youtube.com/watch?v=$videoId"
+    /** SoundCloud ids are already permalinks (see SearchResult.url). */
+    val url get() = when (source) {
+        Source.YT_MUSIC   -> "https://music.youtube.com/watch?v=$videoId"
+        Source.YOUTUBE    -> "https://www.youtube.com/watch?v=$videoId"
+        Source.SOUNDCLOUD -> videoId
+    }
 }
+
+fun PlaylistTrack.toQueueItem() = QueueItem(
+    url = url,
+    videoId = videoId,
+    title = title,
+    artist = channelTitle,
+    artworkUrl = if (source == Source.SOUNDCLOUD) thumbnailUrl else null,
+    source = source
+)
 
 fun SearchResult.toQueueItem() = QueueItem(
     url = url,

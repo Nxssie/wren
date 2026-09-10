@@ -1,6 +1,8 @@
 package ui
 
-import auth.AuthManager
+import auth.AuthEvents
+import auth.GoogleAuth
+import auth.SoundCloudAuth
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,9 +25,11 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.painter.BitmapPainter
@@ -35,6 +39,8 @@ import androidx.compose.ui.window.WindowState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import player.FFmpegPlayer
+import provider.Platform
+import provider.Providers
 import java.net.URL
 
 // PrintStream design tokens
@@ -64,14 +70,24 @@ val Accent        get() = if (globalDark) PsWhite         else PsInk900
 val TextPrimary   get() = if (globalDark) PsWhite         else PsInk900
 val TextSecondary get() = if (globalDark) PsPearl200      else PsSteel500
 val PsInset       get() = if (globalDark) PsMidGraphite   else PsPearl100
+val Hairline      get() = if (globalDark) PsWhite.copy(alpha = 0.12f) else Color(0x1F000000)
+val HairlineSoft  get() = if (globalDark) PsWhite.copy(alpha = 0.06f) else Color(0x0D000000)
 val FontMono            = FontFamily.Monospace
 
+/** Density AWT actually applied (Xft.dpi / OS settings); 1f when it applied nothing. */
+private fun awtDensity(): Float = runCatching {
+    java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+        .defaultScreenDevice.defaultConfiguration.defaultTransform.scaleX.toFloat()
+}.getOrNull()?.takeIf { it > 0f } ?: 1f
+
 @Composable
-fun AppWindow(onCloseRequest: () -> Unit) {
+fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
     val player = remember { FFmpegPlayer() }
-    var authenticated by remember { mutableStateOf(AuthManager.isAuthenticated) }
-    var showAuthDialog by remember { mutableStateOf(false) }
+    var showProfileDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(0) }
+    // Browsing is scoped to one platform at a time; the queue/player stay shared.
+    var platform by remember { mutableStateOf(Platform.YOUTUBE) }
+    val provider = remember(platform) { Providers.of(platform) }
     var artistBrowseId by remember { mutableStateOf<String?>(null) }
     var artistName by remember { mutableStateOf("") }
 
@@ -88,13 +104,20 @@ fun AppWindow(onCloseRequest: () -> Unit) {
         )
     }
 
+    // Scale the window itself to native resolution: AWT may ignore the uiScale property
+    // on X11, so divide out whatever density AWT actually applied and multiply by the
+    // compositor scale. Content density is set explicitly (see below).
+    val awtDensity = remember { awtDensity() }
+    val sizeScale = if (awtDensity > 0f) uiScale / awtDensity else uiScale
+
     Window(
         onCloseRequest = onCloseRequest,
         title = "Wren",
         icon = appIcon,
-        state = WindowState(width = 960.dp, height = 700.dp)
+        state = WindowState(width = (960 * sizeScale).dp, height = (700 * sizeScale).dp)
     ) {
-        MaterialTheme(
+        CompositionLocalProvider(LocalDensity provides Density(uiScale)) {
+            MaterialTheme(
             colors = if (globalDark) darkColors(
                 background = PsInk900, surface = PsGraphite600,
                 primary = PsWhite, onPrimary = PsInk900,
@@ -108,11 +131,11 @@ fun AppWindow(onCloseRequest: () -> Unit) {
             Column(Modifier.fillMaxSize().background(Background)) {
                 Row(Modifier.weight(1f)) {
                     Sidebar(
-                        authenticated = authenticated,
+                        platform = platform,
+                        onPlatformChange = { platform = it; artistBrowseId = null },
                         selectedTab = selectedTab,
                         onTabChange = { selectedTab = it; artistBrowseId = null },
-                        onLoginRequest = { showAuthDialog = true },
-                        onLogout = { AuthManager.logout(); authenticated = false }
+                        onOpenProfile = { showProfileDialog = true }
                     )
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         val browseId = artistBrowseId
@@ -123,12 +146,16 @@ fun AppWindow(onCloseRequest: () -> Unit) {
                                 onBack = { artistBrowseId = null },
                                 onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                             )
-                            selectedTab == 0 -> SearchScreen(
-                                player = player,
-                                onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
-                            )
-                            selectedTab == 1 -> DiscoverScreen(player)
-                            selectedTab == 2 -> LibraryScreen(player)
+                            // key(platform): each platform keeps its own screen state
+                            selectedTab == 0 -> key(platform) {
+                                SearchScreen(
+                                    provider = provider,
+                                    player = player,
+                                    onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
+                                )
+                            }
+                            selectedTab == 1 -> key(platform) { DiscoverScreen(provider, player) }
+                            selectedTab == 2 -> key(platform) { LibraryScreen(provider, player) }
                             selectedTab == 3 -> NowPlayingScreen(player)
                         }
                     }
@@ -136,11 +163,9 @@ fun AppWindow(onCloseRequest: () -> Unit) {
                 PlayerBar(player)
             }
 
-            if (showAuthDialog) {
-                AuthDialog(
-                    onDismiss = { showAuthDialog = false },
-                    onSuccess = { authenticated = true; showAuthDialog = false }
-                )
+            if (showProfileDialog) {
+                ProfileDialog(onDismiss = { showProfileDialog = false })
+            }
             }
         }
     }
@@ -148,11 +173,11 @@ fun AppWindow(onCloseRequest: () -> Unit) {
 
 @Composable
 private fun Sidebar(
-    authenticated: Boolean,
+    platform: Platform,
+    onPlatformChange: (Platform) -> Unit,
     selectedTab: Int,
     onTabChange: (Int) -> Unit,
-    onLoginRequest: () -> Unit,
-    onLogout: () -> Unit
+    onOpenProfile: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -197,6 +222,18 @@ private fun Sidebar(
 
         Spacer(Modifier.height(16.dp))
 
+        Text(
+            "_platform;",
+            color = PsPearl300.copy(alpha = 0.6f),
+            fontFamily = FontMono,
+            fontSize = 9.sp,
+            letterSpacing = 1.7.sp,
+            modifier = Modifier.padding(start = 20.dp, bottom = 6.dp)
+        )
+        PlatformSwitcher(platform, onPlatformChange)
+
+        Spacer(Modifier.height(16.dp))
+
         // Section label
         Text(
             "_navigation;",
@@ -214,8 +251,8 @@ private fun Sidebar(
             onClick = { onTabChange(0) }
         )
         NavItem(
-            code = "DSC",
-            label = "discover",
+            code = if (platform == Platform.YOUTUBE) "RAD" else "DSC",
+            label = Providers.of(platform).discoverLabel,
             selected = selectedTab == 1,
             onClick = { onTabChange(1) }
         )
@@ -269,13 +306,52 @@ private fun Sidebar(
 
         Divider(color = Color.White.copy(alpha = 0.08f), thickness = 1.dp)
 
-        if (authenticated) {
-            UserSection(onLogout = onLogout)
-        } else {
-            LoginButton(onClick = onLoginRequest)
-        }
+        UserSection(onOpenProfile = onOpenProfile)
 
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** Segmented control scoping Search / Discover / Library to one platform. */
+@Composable
+private fun PlatformSwitcher(current: Platform, onChange: (Platform) -> Unit) {
+    val authVersion by AuthEvents.version.collectAsState()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .background(PsGraphite700)
+            .padding(2.dp)
+    ) {
+        Platform.entries.forEach { p ->
+            val selected = p == current
+            val connected = remember(authVersion, p) { Providers.of(p).isAuthenticated }
+            Row(
+                Modifier
+                    .weight(1f)
+                    .background(if (selected) PsWhite else Color.Transparent)
+                    .clickable { onChange(p) }
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    p.code,
+                    color = if (selected) PsInk900 else PsPearl300.copy(alpha = 0.7f),
+                    fontFamily = FontMono,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.4.sp
+                )
+                Spacer(Modifier.width(6.dp))
+                // Session dot: green when that platform has a connected account
+                Box(
+                    Modifier.size(5.dp).background(
+                        if (connected) PsSignalOk else (if (selected) PsPearl300 else PsPearl300.copy(alpha = 0.25f))
+                    )
+                )
+            }
+        }
     }
 }
 
@@ -331,13 +407,16 @@ private fun NavItem(
 }
 
 @Composable
-private fun UserSection(onLogout: () -> Unit) {
-    var showLogout by remember { mutableStateOf(false) }
-    val avatarUrl = remember { AuthManager.avatarUrl }
-    val accountName = remember { AuthManager.accountName }
+private fun UserSection(onOpenProfile: () -> Unit) {
+    val authVersion by AuthEvents.version.collectAsState()
+    val avatarUrl = remember(authVersion) { GoogleAuth.avatarUrl ?: SoundCloudAuth.avatarUrl }
+    val googleConnected = remember(authVersion) { GoogleAuth.isAuthenticated }
+    val scConnected = remember(authVersion) { SoundCloudAuth.isAuthenticated }
+    val profileName = remember(authVersion) { auth.AuthStore.profile().displayName }
     var avatarBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
 
     LaunchedEffect(avatarUrl) {
+        avatarBitmap = null
         if (!avatarUrl.isNullOrEmpty()) {
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -348,101 +427,45 @@ private fun UserSection(onLogout: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxWidth()) {
-        if (showLogout) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onLogout(); showLogout = false }
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ExitToApp,
-                    contentDescription = "Sign out",
-                    tint = PsPearl300.copy(alpha = 0.7f),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "_sign_out;",
-                    color = PsPearl300.copy(alpha = 0.7f),
-                    fontFamily = FontMono,
-                    fontSize = 11.sp
-                )
+    // Always visible, whatever is connected: the profile dialog is where sessions are
+    // connected/disconnected independently, so it must stay reachable at all times.
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenProfile)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(28.dp).background(PsGraphite600), contentAlignment = Alignment.Center) {
+            if (avatarBitmap != null) {
+                Image(bitmap = avatarBitmap!!, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            } else {
+                Icon(Icons.Default.AccountCircle, contentDescription = null, tint = PsPearl300, modifier = Modifier.size(20.dp))
             }
         }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showLogout = !showLogout }
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Square avatar
-            Box(
-                Modifier.size(28.dp).background(PsGraphite600),
-                contentAlignment = Alignment.Center
-            ) {
-                if (avatarBitmap != null) {
-                    Image(
-                        bitmap = avatarBitmap!!,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.AccountCircle,
-                        contentDescription = null,
-                        tint = PsPearl300,
-                        modifier = Modifier.size(20.dp)
-                    )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(profileName, color = PsWhite, fontFamily = FontMono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ProviderBadge("GOO", googleConnected)
+                ProviderBadge("SC", scConnected)
+                if (!googleConnected && !scConnected) {
+                    Text("_sign_in;", color = PsPearl300.copy(alpha = 0.5f), fontFamily = FontMono, fontSize = 9.sp)
                 }
             }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    accountName ?: "account",
-                    color = PsWhite,
-                    fontFamily = FontMono,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Icon(
-                if (showLogout) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
-                contentDescription = null,
-                tint = PsPearl300.copy(alpha = 0.5f),
-                modifier = Modifier.size(16.dp)
-            )
         }
+        Icon(
+            Icons.Default.Settings,
+            contentDescription = "Profile and sessions",
+            tint = PsPearl300.copy(alpha = 0.5f), modifier = Modifier.size(14.dp)
+        )
     }
 }
 
 @Composable
-private fun LoginButton(onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            Icons.Default.AccountCircle,
-            contentDescription = "Sign in",
-            tint = PsPearl300.copy(alpha = 0.5f),
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            "_sign_in;",
-            color = PsPearl300.copy(alpha = 0.7f),
-            fontFamily = FontMono,
-            fontSize = 11.sp
-        )
-    }
+private fun ProviderBadge(code: String, connected: Boolean) {
+    Text(
+        code,
+        color = if (connected) PsSignalOk else PsPearl300.copy(alpha = 0.3f),
+        fontFamily = FontMono,
+        fontSize = 9.sp
+    )
 }

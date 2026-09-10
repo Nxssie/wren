@@ -43,6 +43,9 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v6
       - name: Build ${{ matrix.name }} distributable
+        env:
+          WREN_GOOGLE_CLIENT_ID: ${{ secrets.WREN_GOOGLE_CLIENT_ID }}
+          WREN_GOOGLE_CLIENT_SECRET: ${{ secrets.WREN_GOOGLE_CLIENT_SECRET }}
         run: ./gradlew :desktop:package${{ matrix.format }}
       - name: Dump jpackage logs on failure
         if: failure()

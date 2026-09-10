@@ -1,6 +1,6 @@
 package api
 
-import auth.AuthManager
+import auth.GoogleAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*

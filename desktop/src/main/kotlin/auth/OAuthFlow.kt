@@ -1,7 +1,10 @@
 package auth
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.serialization.json.*
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -17,8 +20,16 @@ private val httpClient: HttpClient = HttpClient.newHttpClient()
 private val json = Json { ignoreUnknownKeys = true }
 
 private const val SCOPE = "https://www.googleapis.com/auth/youtube"
-private const val REDIRECT_PORT = 8765
-private const val REDIRECT_URI = "http://localhost:$REDIRECT_PORT"
+// Google "Desktop app" clients accept any loopback port, so each attempt binds an
+// ephemeral one and puts it in the redirect URI. A fixed port broke with
+// "Address already in use" whenever a previous attempt was still waiting.
+private const val DEFAULT_REDIRECT_PORT = 8765
+private const val CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
+private fun redirectUri(port: Int) = "http://localhost:$port"
+
+/** The listener of the attempt in flight, closed when a new attempt starts (single-flight). */
+private var pendingCallback: ServerSocket? = null
+private val pendingLock = Any()
 
 private val credentialsFile = java.io.File(System.getProperty("user.home"), ".config/wren/oauth.json")
 
@@ -32,7 +43,8 @@ data class OAuthTokens(
 
 data class AuthState(
     val authUrl: String,
-    val codeVerifier: String
+    val codeVerifier: String,
+    val redirectPort: Int = DEFAULT_REDIRECT_PORT
 )
 
 private val random = Random()
@@ -49,23 +61,38 @@ fun computeCodeChallenge(verifier: String): String {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(hash)
 }
 
-fun buildAuthUrl(clientId: String): AuthState {
+fun buildAuthUrl(clientId: String, redirectPort: Int = DEFAULT_REDIRECT_PORT): AuthState {
     val codeVerifier = generateCodeVerifier()
     val codeChallenge = computeCodeChallenge(codeVerifier)
     val url =
         "https://accounts.google.com/o/oauth2/v2/auth" +
         "?client_id=$clientId" +
-        "&redirect_uri=${encode(REDIRECT_URI)}" +
+        "&redirect_uri=${encode(redirectUri(redirectPort))}" +
         "&response_type=code" +
         "&scope=${encode(SCOPE)}" +
         "&access_type=offline" +
         "&prompt=consent" +
         "&code_challenge=${encode(codeChallenge)}" +
         "&code_challenge_method=S256"
-    return AuthState(url, codeVerifier)
+    return AuthState(url, codeVerifier, redirectPort)
 }
 
-fun loadCredentials(): OAuthCredentials? = runCatching {
+/**
+ * OAuth client to use, in priority order:
+ *  1. `~/.config/wren/oauth.json` — user-supplied override (own Cloud project)
+ *  2. The client bundled at build time (see `generateBuildConfig` in build.gradle.kts)
+ * Returns null when neither is available, i.e. a source build without env vars.
+ */
+fun loadCredentials(): OAuthCredentials? = loadCredentialsFile() ?: bundledCredentials()
+
+/** True when Google login is possible at all (bundled or user-provided client). */
+val hasGoogleCredentials: Boolean get() = loadCredentials() != null
+
+private fun bundledCredentials(): OAuthCredentials? =
+    OAuthCredentials(BuildConfig.GOOGLE_CLIENT_ID, BuildConfig.GOOGLE_CLIENT_SECRET)
+        .takeIf { it.clientId.isNotBlank() && it.clientSecret.isNotBlank() }
+
+private fun loadCredentialsFile(): OAuthCredentials? = runCatching {
     if (!credentialsFile.exists()) return null
     val root = json.parseToJsonElement(credentialsFile.readText()).jsonObject
     val obj = root["installed"]?.jsonObject ?: root["web"]?.jsonObject ?: root
@@ -75,32 +102,80 @@ fun loadCredentials(): OAuthCredentials? = runCatching {
     )
 }.getOrNull()
 
-suspend fun waitForAuthCode(): String = withContext(Dispatchers.IO) {
-    ServerSocket().use { server ->
-        server.reuseAddress = true
-        server.bind(InetSocketAddress("localhost", REDIRECT_PORT))
-        server.accept().use { socket ->
-            val request = socket.getInputStream().bufferedReader().readLine() ?: ""
-            // GET /?code=XXX HTTP/1.1
-            val code = request.substringAfter("?").substringBefore(" ")
-                .split("&").firstOrNull { it.startsWith("code=") }
-                ?.removePrefix("code=")
-                ?: throw Exception("No authorization code received")
+/**
+ * Full Google sign-in: bind the loopback listener first (ephemeral port), build the
+ * auth URL for that port, hand it to [openBrowser], wait for the redirect, exchange the code.
+ * Cancelling the calling coroutine closes the listener; starting a new attempt closes
+ * the previous one, so a forgotten browser tab can never block the next login.
+ */
+suspend fun runGoogleLogin(creds: OAuthCredentials, openBrowser: (String) -> Unit): OAuthTokens {
+    val server = withContext(Dispatchers.IO) {
+        ServerSocket().apply {
+            reuseAddress = true
+            soTimeout = CALLBACK_TIMEOUT_MS
+            bind(InetSocketAddress("localhost", 0))
+        }
+    }
+    synchronized(pendingLock) {
+        pendingCallback?.let { runCatching { it.close() } }
+        pendingCallback = server
+    }
+    try {
+        val authState = buildAuthUrl(creds.clientId, server.localPort)
+        openBrowser(authState.authUrl)
+        val code = waitForAuthCode(server)
+        return exchangeCode(code, creds, authState.codeVerifier, server.localPort)
+    } finally {
+        synchronized(pendingLock) { if (pendingCallback === server) pendingCallback = null }
+        runCatching { server.close() }
+    }
+}
 
-            val html = "<html><body style='font-family:sans-serif;text-align:center;padding:60px'>" +
-                "<h2>Authorization complete!</h2><p>You can close this window.</p></body></html>"
-            val response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n$html"
-            socket.getOutputStream().write(response.toByteArray())
-            code
+/** Blocks on accept() in IO, but closes the socket on cancellation so the coroutine really stops. */
+private suspend fun waitForAuthCode(server: ServerSocket): String = withContext(Dispatchers.IO) {
+    suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { runCatching { server.close() } }
+        try {
+            server.accept().use { socket ->
+                val request = socket.getInputStream().bufferedReader().readLine() ?: ""
+                // GET /?code=XXX HTTP/1.1
+                val query = request.substringAfter("?", "").substringBefore(" ")
+                val params = query.split("&").associate { it.substringBefore("=") to it.substringAfter("=", "") }
+                val error = params["error"]
+                val code = params["code"]
+
+                val (title, body) = when {
+                    code != null -> "Authorization complete!" to "You can close this window."
+                    else -> "Authorization failed" to (error ?: "no authorization code received")
+                }
+                val html = "<html><body style='font-family:sans-serif;text-align:center;padding:60px'>" +
+                    "<h2>$title</h2><p>$body</p></body></html>"
+                val response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${html.toByteArray().size}\r\n\r\n$html"
+                socket.getOutputStream().write(response.toByteArray())
+
+                if (code != null) cont.resume(java.net.URLDecoder.decode(code, "UTF-8"))
+                else cont.resumeWithException(Exception("Google returned: ${error ?: "no authorization code"}"))
+            }
+        } catch (e: java.net.SocketTimeoutException) {
+            cont.resumeWithException(Exception("Timed out waiting for the browser authorization"))
+        } catch (e: Exception) {
+            if (cont.isActive) cont.resumeWithException(
+                if (server.isClosed) Exception("Login cancelled") else e
+            )
         }
     }
 }
 
-suspend fun exchangeCode(code: String, creds: OAuthCredentials, codeVerifier: String): OAuthTokens = withContext(Dispatchers.IO) {
+suspend fun exchangeCode(
+    code: String,
+    creds: OAuthCredentials,
+    codeVerifier: String,
+    redirectPort: Int = DEFAULT_REDIRECT_PORT
+): OAuthTokens = withContext(Dispatchers.IO) {
     val body = "code=${encode(code)}" +
         "&client_id=${creds.clientId}" +
         "&client_secret=${creds.clientSecret}" +
-        "&redirect_uri=${encode(REDIRECT_URI)}" +
+        "&redirect_uri=${encode(redirectUri(redirectPort))}" +
         "&grant_type=authorization_code" +
         "&code_verifier=${encode(codeVerifier)}"
     val response = post("https://oauth2.googleapis.com/token", body)

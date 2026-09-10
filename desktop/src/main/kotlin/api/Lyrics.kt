@@ -45,9 +45,10 @@ suspend fun fetchLyrics(title: String, artist: String, durationSec: Double): Lyr
 
             val plain = obj["plainLyrics"]?.jsonPrimitive?.content
             if (!plain.isNullOrBlank()) {
+                // No timing info: timeMs = 0 so the UI never treats a line as "active"
                 val lines = plain.lines()
                     .filter { it.isNotBlank() }
-                    .mapIndexed { i, text -> LyricLine(i * 4000L, text.trim()) }
+                    .map { text -> LyricLine(0L, text.trim()) }
                 return@runCatching LyricsResult(lines, synced = false)
             }
 

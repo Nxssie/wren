@@ -15,7 +15,9 @@ data class PlayRecord(
     val artist: String,
     val genre: String? = null,
     val artworkUrl: String? = null,
-    val playedAt: Long
+    val playedAt: Long,
+    // Legacy entries predate multi-platform history and were all SoundCloud
+    val source: Source = Source.SOUNDCLOUD
 )
 
 object ListeningHistory {
@@ -26,7 +28,6 @@ object ListeningHistory {
 
     @Synchronized
     fun record(item: QueueItem) {
-        if (item.source != Source.SOUNDCLOUD) return
         val entries = load()
         // Skip if the last 3 entries are the same track (avoid repeat spam)
         val recentIds = entries.take(3).map { it.trackId }
@@ -38,18 +39,22 @@ object ListeningHistory {
             artist = item.artist,
             genre = item.genre,
             artworkUrl = item.artworkUrl,
-            playedAt = System.currentTimeMillis()
+            playedAt = System.currentTimeMillis(),
+            source = item.source
         )
         val updated = (listOf(record) + entries).take(MAX_ENTRIES)
         save(updated)
     }
 
-    fun recent(n: Int): List<PlayRecord> {
-        return load().take(n)
+    /** Most recent plays, optionally restricted to the given sources. */
+    fun recent(n: Int, sources: Set<Source>? = null): List<PlayRecord> {
+        val all = load()
+        return (if (sources == null) all else all.filter { it.source in sources }).take(n)
     }
 
     fun topGenres(limit: Int): List<Pair<String, Int>> {
-        val entries = load().take(100)
+        // Genres are only known for SoundCloud tracks
+        val entries = load().filter { it.source == Source.SOUNDCLOUD }.take(100)
         return entries.mapNotNull { it.genre }
             .groupingBy { it }
             .eachCount()

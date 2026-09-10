@@ -2,7 +2,9 @@ package api
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import auth.SoundCloudAuth
 import kotlinx.serialization.json.*
+import models.Playlist
 import models.SearchResult
 import models.Source
 import util.Log
@@ -42,7 +44,7 @@ internal fun extractClientId(js: String): String? =
 private val ASSET_URL_REGEX = Regex("""https://a-v2\.sndcdn\.com/assets/[^"]+\.js""")
 private val CLIENT_ID_REGEX = Regex("""client_id\s*[:=]\s*"([a-zA-Z0-9]{32})""")
 
-internal suspend fun scClientId(): String {
+suspend fun scClientId(): String {
     cachedClientId?.let { if (System.currentTimeMillis() - clientIdFetchedAt < CLIENT_ID_TTL_MS) return it }
     return withContext(Dispatchers.IO) {
         // Config override
@@ -99,27 +101,37 @@ private fun httpGet(url: String): String? {
 
 private const val SC_BASE = "https://api-v2.soundcloud.com"
 
-internal suspend fun scGetJson(path: String): JsonObject? {
+/**
+ * GET an api-v2 path as JSON. Sends the user's OAuth token when a session exists so
+ * personalised endpoints (`/me/...`, "Made for you" selections) resolve for that user;
+ * anonymous calls still work for public data.
+ */
+internal suspend fun scGetJson(path: String): JsonObject? = scGetJsonElement(path)?.let { it as? JsonObject }
+
+internal suspend fun scGetJsonElement(path: String): JsonElement? {
+    SoundCloudAuth.ensureValidToken()
+    val token = SoundCloudAuth.accessToken
     val clientId = scClientId()
     val separator = if ('?' in path) "&" else "?"
     val fullUrl = "$SC_BASE$path${separator}client_id=$clientId"
-    val resp = httpGetJson(fullUrl)
+    val resp = httpGetJson(fullUrl, token)
     if (resp == null || resp.status in 401..403) {
         // Possibly stale client_id — invalidate and retry once
         Log.w("SoundCloud", "API returned ${resp?.status} for $path — re-scraping client_id")
         invalidateClientId()
         val newClientId = runCatching { scClientId() }.getOrNull() ?: return null
         val retryUrl = "$SC_BASE$path${separator}client_id=$newClientId"
-        return httpGetJson(retryUrl)?.body?.jsonObject
+        return httpGetJson(retryUrl, token)?.takeIf { it.status in 200..299 }?.body
     }
-    return resp.body.jsonObject
+    return resp.takeIf { it.status in 200..299 }?.body
 }
 
 private data class JsonResp(val status: Int, val body: JsonElement)
 
-private fun httpGetJson(url: String): JsonResp? = runCatching {
+private fun httpGetJson(url: String, token: String? = null): JsonResp? = runCatching {
     val req = HttpRequest.newBuilder(URI.create(url))
         .header("User-Agent", SC_USER_AGENT)
+        .apply { if (token != null) header("Authorization", "OAuth $token") }
         .GET()
         .timeout(Duration.ofSeconds(10))
         .build()
@@ -155,14 +167,117 @@ object SoundCloud {
         }
     }
 
+    /**
+     * Radio seeded by a track. Prefers SoundCloud's own station (what the web player
+     * plays for "Start station"); falls back to related tracks when it is empty.
+     */
     suspend fun stationFor(seed: SearchResult): List<SearchResult> = withContext(Dispatchers.IO) {
         val id = seed.soundcloudId ?: return@withContext listOf(seed)
-        val related = runCatching { relatedTracks(id, 25) }.getOrDefault(emptyList())
-        val seedIds = setOf(seed.soundcloudId)
-        val relatedUnique = related
-            .filter { it.soundcloudId !in seedIds && it.videoId != seed.videoId }
+        val station = runCatching { stationTracks(id, 50) }.getOrDefault(emptyList())
+        val candidates = if (station.isNotEmpty()) station else runCatching { relatedTracks(id, 25) }.getOrDefault(emptyList())
+        val rest = candidates
+            .filter { it.soundcloudId != id && it.videoId != seed.videoId }
             .distinctBy { it.soundcloudId }
-        listOf(seed) + relatedUnique
+        listOf(seed) + rest
+    }
+
+    private suspend fun stationTracks(trackId: Long, limit: Int): List<SearchResult> {
+        val root = scGetJson("/stations/soundcloud:track-stations:$trackId/tracks?limit=$limit") ?: return emptyList()
+        return parseTrackCollection(root["collection"]?.jsonArray)
+    }
+
+    // ── Discover: SoundCloud's own selections ("Made for you", curated, trending) ──
+
+    data class Selection(val urn: String, val title: String, val items: List<Collection>)
+
+    /** A playlist-like item in a selection. [id] is what [collectionTracks] takes back. */
+    data class Collection(
+        val id: String,
+        val title: String,
+        val subtitle: String?,
+        val artworkUrl: String?,
+        val trackCount: Int
+    )
+
+    suspend fun mixedSelections(limit: Int = 12): List<Selection> = withContext(Dispatchers.IO) {
+        val root = scGetJson("/mixed-selections?limit=$limit") ?: return@withContext emptyList()
+        root["collection"]?.jsonArray?.mapNotNull { sel ->
+            val obj = sel.jsonObject
+            val title = obj["title"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val urn = obj["urn"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val items = obj["items"]?.jsonObject?.get("collection")?.jsonArray
+                ?.mapNotNull { parseCollection(it.jsonObject) } ?: emptyList()
+            if (items.isEmpty()) null else Selection(urn, title, items)
+        } ?: emptyList()
+    }
+
+    /**
+     * Tracks of a collection returned by [mixedSelections] or [userPlaylists].
+     * Playlist payloads embed only the first few full tracks; the rest are id stubs
+     * that must be hydrated through `/tracks?ids=`.
+     */
+    suspend fun collectionTracks(collectionId: String): List<SearchResult> = withContext(Dispatchers.IO) {
+        val (kind, id) = collectionId.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+        val path = when (kind) {
+            "playlist" -> "/playlists/$id?representation=full"
+            "system" -> "/system-playlists/$id?representation=full"
+            else -> return@withContext emptyList()
+        }
+        val root = scGetJson(path) ?: return@withContext emptyList()
+        hydrate(root["tracks"]?.jsonArray)
+    }
+
+    // ── Library ──────────────────────────────────────────────────────────────
+
+    suspend fun userLikes(userId: Long, limit: Int = 50): List<SearchResult> = withContext(Dispatchers.IO) {
+        val root = scGetJson("/users/$userId/track_likes?limit=$limit") ?: return@withContext emptyList()
+        root["collection"]?.jsonArray?.mapNotNull { item ->
+            item.jsonObject["track"]?.jsonObject?.let { parseScTrack(it) }
+        } ?: emptyList()
+    }
+
+    suspend fun userPlaylists(userId: Long, limit: Int = 50): List<Playlist> = withContext(Dispatchers.IO) {
+        val root = scGetJson("/users/$userId/playlists_without_albums?limit=$limit") ?: return@withContext emptyList()
+        root["collection"]?.jsonArray?.mapNotNull { parseCollection(it.jsonObject) }?.map {
+            Playlist(id = it.id, title = it.title, itemCount = it.trackCount, thumbnailUrl = it.artworkUrl ?: "")
+        } ?: emptyList()
+    }
+
+    // ── Internals ────────────────────────────────────────────────────────────
+
+    private fun parseTrackCollection(arr: JsonArray?): List<SearchResult> =
+        arr?.mapNotNull { parseScTrack(it.jsonObject) } ?: emptyList()
+
+    /** Full track objects pass through; id-only stubs are fetched in batches, order preserved. */
+    private suspend fun hydrate(tracks: JsonArray?): List<SearchResult> {
+        if (tracks == null) return emptyList()
+        val full = tracks.mapNotNull { t -> t.jsonObject.takeIf { "title" in it }?.let(::parseScTrack) }
+            .associateBy { it.soundcloudId }
+        val stubIds = tracks.mapNotNull { t -> t.jsonObject.takeIf { "title" !in it }?.get("id")?.jsonPrimitive?.longOrNull }
+        val fetched = stubIds.chunked(50).flatMap { chunk ->
+            val arr = scGetJsonElement("/tracks?ids=${chunk.joinToString(",")}") as? JsonArray
+            parseTrackCollection(arr)
+        }.associateBy { it.soundcloudId }
+        return tracks.mapNotNull { t ->
+            val id = t.jsonObject["id"]?.jsonPrimitive?.longOrNull ?: return@mapNotNull null
+            full[id] ?: fetched[id]
+        }
+    }
+
+    internal fun parseCollection(obj: JsonObject): Collection? {
+        val title = obj["title"]?.jsonPrimitive?.contentOrNull ?: return null
+        val kind = obj["kind"]?.jsonPrimitive?.contentOrNull ?: return null
+        val id = when (kind) {
+            "playlist" -> "playlist:" + (obj["id"]?.jsonPrimitive?.longOrNull ?: return null)
+            "system-playlist" -> "system:" + (obj["urn"]?.jsonPrimitive?.contentOrNull ?: return null)
+            else -> return null
+        }
+        val artwork = (obj["calculated_artwork_url"] ?: obj["artwork_url"])?.jsonPrimitive?.contentOrNull
+            ?.replace("-large.", "-t500x500.")
+        val count = obj["track_count"]?.jsonPrimitive?.intOrNull ?: obj["tracks"]?.jsonArray?.size ?: 0
+        val subtitle = obj["description"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: obj["user"]?.jsonObject?.get("username")?.jsonPrimitive?.contentOrNull
+        return Collection(id, title, subtitle, artwork, count)
     }
 }
 

@@ -20,7 +20,7 @@
 
 - Search songs across YouTube Music, YouTube, and SoundCloud simultaneously, results interleaved and sortable by popularity, duration, or source
 - SoundCloud Station: start a radio of related tracks from any SoundCloud result
-- Weekly Discovery: auto-generated playlist from your SoundCloud listening history (interest-based)
+- Discover per platform: SoundCloud "Made for you" mixes, curated and trending selections plus a weekly list generated from your listening history; YouTube radios seeded by your recent plays
 - Artist pages with top songs, albums, singles, and EPs
 - Queue playback with automatic prefetching of upcoming tracks
 - Google OAuth login to access your YouTube Music playlists and library
@@ -67,13 +67,19 @@ desktop/src/main/kotlin/
 ├── player/
 │   └── FFmpegPlayer.kt       # in-process FFmpeg decoder + Java Sound API playback
 ├── ui/
-│   ├── App.kt                # Window, sidebar, navigation
+│   ├── App.kt                # Window, sidebar, platform switcher, navigation
 │   ├── SearchScreen.kt       # Search UI, sort dropdown, artist rows
 │   ├── ArtistScreen.kt       # Artist page UI
 │   ├── LibraryScreen.kt      # Playlist library
 │   ├── NowPlayingScreen.kt   # Now Playing with lyrics + queue
 │   ├── PlayerBar.kt          # Persistent playback controls
-│   └── AuthDialog.kt         # OAuth login dialog
+│   ├── DiscoverScreen.kt     # Platform-scoped discover: sections, collection cards, inline open
+│   ├── ProfileDialog.kt      # Local profile + Google/SoundCloud sessions
+│   └── SoundCloudLoginWindow.kt # Embedded WebView sign-in for SoundCloud
+├── provider/
+│   ├── MusicProvider.kt      # Platform abstraction: search, discover, station, library
+│   ├── YouTubeProvider.kt    # YouTube + YouTube Music behind one provider (radio, library)
+│   └── SoundCloudProvider.kt # SoundCloud provider (stations, selections, likes, playlists)
 └── util/
     └── Log.kt                # File logger (~/.local/state/wren/wren.log) for diagnostics
 ```
@@ -122,21 +128,69 @@ To use your own client ID, create `~/.config/wren/soundcloud.json`:
 
 Listening history is stored locally at `~/.config/wren/history.json` and used to generate the weekly discovery playlist.
 
-## Authentication (optional)
+## Fractional scaling on Wayland (Hyprland, etc.)
 
-Wren works without a Google account — search and playback are fully available without login.
+Wren renders through XWayland (AWT has no stable native Wayland toolkit yet). Wren detects your
+monitor scale at startup and renders natively, but the compositor must be told not to rescale
+XWayland buffers — otherwise the UI looks pixelated under fractional scaling. In `hyprland.conf`:
 
-Logging in unlocks:
-- Your YouTube Music playlists and library
-- View count data for popularity sorting
-
-To enable login, create an OAuth 2.0 client ID in the [Google Cloud Console](https://console.cloud.google.com/) (Desktop app type, YouTube Data API v3 scope) and place the downloaded `client_secret_*.json` at:
-
-```
-~/.config/wren/oauth.json
+```ini
+xwayland {
+    force_zero_scaling = true
+}
 ```
 
-Tokens are stored at `~/.config/wren/tokens.json` and refreshed automatically.
+## Profile & Sessions (optional)
+
+Wren works without any login — search, playback, station, and weekly discovery are fully available.
+
+Logging in unlocks provider-specific features:
+
+| Provider | What it unlocks |
+|----------|----------------|
+| **Google** | YouTube Music playlists, library, view count data |
+| **SoundCloud** | Liked tracks, your playlists, "Made for you" mixes in Discover |
+
+### Profile
+
+A local profile is created automatically at `~/.config/wren/profile.json`. You can rename it from the sidebar.
+
+### Google login
+
+Official builds bundle a Google OAuth client, so just click **GOO → connect** in the sidebar
+and authorize in the browser. Until the app passes Google's OAuth verification you may see an
+"unverified app" warning on the consent screen.
+
+If you build from source, or want to use your own Cloud project, either:
+
+- export `WREN_GOOGLE_CLIENT_ID` / `WREN_GOOGLE_CLIENT_SECRET` before running Gradle (baked in at build time), or
+- create an OAuth 2.0 client ID in the [Google Cloud Console](https://console.cloud.google.com/)
+  (Desktop app type, YouTube Data API v3 scope) and save the downloaded `client_secret_*.json`
+  to `~/.config/wren/oauth.json`. The file always takes precedence over the bundled client.
+
+Tokens are stored at `~/.config/wren/sessions/google.json` and refreshed automatically.
+
+### SoundCloud login
+
+Two ways to connect:
+
+1. **Browser sign-in** (recommended): click **SC → connect**, then **sign_in_with_browser** — a window opens with the SoundCloud login page. Sign in normally; Wren captures the session cookie automatically.
+2. **Manual token**: get your OAuth token from the browser (cookie `oauth_token` on soundcloud.com) and paste it.
+
+Session stored at `~/.config/wren/sessions/soundcloud.json`.
+
+### API Keys (optional)
+
+Wren ships with default API keys for YouTube Search and InnerTube. To use your own keys, create `~/.config/wren/api.json`:
+
+```json
+{
+  "youtubeApiKey": "YOUR_YOUTUBE_DATA_API_KEY",
+  "innerTubeApiKey": "YOUR_INNERTUBE_KEY"
+}
+```
+
+Keys in this file override the built-in defaults.
 
 ### API Keys (optional)
 

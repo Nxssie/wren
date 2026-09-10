@@ -7,9 +7,37 @@ OUTPUT="Wren.AppImage"
 APPIMAGETOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
 APPIMAGETOOL="./appimagetool"
 
+# 0. Resolve a JDK 21 for Gradle. The Kotlin toolchain is pinned to 21 and Gradle
+#    can't auto-provision it, so look in mise first (our version manager), then JAVA_HOME.
+#    Passing the path explicitly also makes the toolchain resolvable when PATH has a newer JDK.
+resolve_jdk21() {
+    local candidate
+    if command -v mise &>/dev/null; then
+        candidate=$(mise where java@21 2>/dev/null || true)
+        [ -n "$candidate" ] && [ -x "$candidate/bin/java" ] && { echo "$candidate"; return; }
+    fi
+    for candidate in "${MISE_DATA_DIR:-$HOME/.local/share/mise}"/installs/java/*21*; do
+        [ -x "$candidate/bin/java" ] && { readlink -f "$candidate"; return; }
+    done
+    if [ -n "${JAVA_HOME:-}" ] && "$JAVA_HOME/bin/java" -version 2>&1 | grep -q '"21'; then
+        echo "$JAVA_HOME"; return
+    fi
+    return 1
+}
+
+if ! JDK21=$(resolve_jdk21); then
+    echo "ERROR: No JDK 21 found. Install one with: mise install java@21" >&2
+    exit 1
+fi
+echo ">>> Using JDK 21 at $JDK21"
+export JAVA_HOME="$JDK21"
+
 # 1. Build distributable
 echo ">>> Building distributable..."
-./gradlew :desktop:createDistributable
+# in-process: the Kotlin compile daemon chokes on 4-part JDK versions (e.g. Corretto 25.0.4.1)
+./gradlew :desktop:createDistributable \
+    -Porg.gradle.java.installations.paths="$JDK21" \
+    -Pkotlin.compiler.execution.strategy=in-process
 
 DIST_DIR="desktop/build/compose/binaries/main/app/${APP_NAME}"
 if [ ! -d "$DIST_DIR" ]; then
@@ -77,9 +105,19 @@ else
     fi
 fi
 
-# 4. Package AppImage
+# 4. Package AppImage — extract appimagetool first when libfuse2 is missing
 echo ">>> Packaging AppImage..."
-ARCH=x86_64 "$APPIMAGETOOL" "$APP_DIR" "$OUTPUT"
+if ! ldconfig -p 2>/dev/null | grep -q libfuse.so.2; then
+    if [ ! -d "squashfs-root" ]; then
+        echo ">>> libfuse2 not found — extracting appimagetool to run it without FUSE"
+        "$APPIMAGETOOL" --appimage-extract >/dev/null
+    fi
+    APPIMAGETOOL="./squashfs-root/AppRun"
+fi
+# Write to a temp file and rename: overwriting in place fails with "Text file busy"
+# while a previous build of the AppImage is still running.
+ARCH=x86_64 "$APPIMAGETOOL" "$APP_DIR" "$OUTPUT.tmp"
+mv -f "$OUTPUT.tmp" "$OUTPUT"
 
 echo ""
 echo "Done! Created: $OUTPUT"

@@ -83,7 +83,7 @@ object SoundCloudDiscovery {
     }
 
     private fun buildSeeds(): List<SearchResult> {
-        val recent = ListeningHistory.recent(6)
+        val recent = ListeningHistory.recent(6, setOf(models.Source.SOUNDCLOUD))
         val byGenre = mutableMapOf<String, SearchResult>()
         val byArtist = mutableMapOf<String, SearchResult>()
         for (record in recent) {
@@ -112,7 +112,7 @@ object SoundCloudDiscovery {
         artist = artist,
         artistId = null,
         duration = "",
-        thumbnailUrl = artworkUrl ?: "",
+        thumbnailUrl = artworkUrl?.replace("-large.", "-t500x500.") ?: "",
         source = models.Source.SOUNDCLOUD,
         soundcloudId = trackId.toLongOrNull(),
         genre = genre

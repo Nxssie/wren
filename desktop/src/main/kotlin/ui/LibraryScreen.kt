@@ -21,32 +21,36 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import models.Playlist
 import models.PlaylistTrack
-import api.fetchPlaylistTracks
-import api.fetchUserPlaylists
 import api.resolveStreamUrl
-import auth.AuthManager
+import provider.MusicProvider
 import kotlinx.coroutines.launch
 import player.FFmpegPlayer
-import models.QueueItem
+import models.toQueueItem
 
 @Composable
-fun LibraryScreen(player: FFmpegPlayer) {
+fun LibraryScreen(provider: MusicProvider, player: FFmpegPlayer) {
     var playlists by remember { mutableStateOf<List<Playlist>?>(null) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
     var tracks by remember { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    if (!AuthManager.isAuthenticated) {
+    if (!provider.supportsLibrary) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("// sign_in_required;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
+            Text("// ${provider.platform.label}_library_not_available_yet;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
+        }
+        return
+    }
+    if (!provider.isAuthenticated) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("// ${provider.platform.label}_sign_in_required;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
         return
     }
 
     LaunchedEffect(Unit) {
         loading = true
-        playlists = fetchUserPlaylists()
+        playlists = runCatching { provider.playlists() }.getOrDefault(emptyList())
         loading = false
     }
 
@@ -103,7 +107,7 @@ fun LibraryScreen(player: FFmpegPlayer) {
                             selectedPlaylist = playlist
                             scope.launch {
                                 loading = true
-                                tracks = fetchPlaylistTracks(playlist.id)
+                                tracks = runCatching { provider.playlistTracks(playlist.id) }.getOrDefault(emptyList())
                                 loading = false
                                 tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
                             }
@@ -172,7 +176,7 @@ private fun PlaylistTrackRow(track: PlaylistTrack, index: Int, tracks: List<Play
             }
             .background(Color.Transparent)
             .clickable {
-                player.loadQueue(tracks.map { QueueItem(it.url, it.videoId, it.title, it.channelTitle) }, index)
+                player.loadQueue(tracks.map { it.toQueueItem() }, index)
             }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically

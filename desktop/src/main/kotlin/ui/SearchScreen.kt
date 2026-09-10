@@ -35,9 +35,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import models.SearchResult
-import api.SoundCloud
-import api.YoutubeMusic
 import api.resolveStreamUrl
+import provider.MusicProvider
+import provider.Platform
+import provider.Providers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -48,27 +49,24 @@ import models.QueueItem
 import models.toQueueItem
 import java.net.URL
 
-enum class SortOrder(val label: String) {
+/** [youtubeOnly] orders exist because YouTube merges the Music and video catalogs. */
+enum class SortOrder(val label: String, val youtubeOnly: Boolean = false) {
     POPULARITY("Popularity"),
     RELEVANCE("Relevance"),
-    YT_MUSIC_FIRST("YT Music first"),
-    YOUTUBE_FIRST("YouTube first"),
-    SOUNDCLOUD_FIRST("SoundCloud first"),
-    DURATION("Duration")
+    MUSIC_FIRST("Music first", youtubeOnly = true),
+    VIDEOS_FIRST("Videos first", youtubeOnly = true),
+    DURATION("Duration");
+
+    companion object {
+        fun forPlatform(platform: Platform) = entries.filter { !it.youtubeOnly || platform == Platform.YOUTUBE }
+    }
 }
 
 private fun List<SearchResult>.sorted(order: SortOrder): List<SearchResult> = when (order) {
     SortOrder.POPULARITY -> sortedByDescending { it.viewCount ?: -1L }
     SortOrder.RELEVANCE  -> this
-    SortOrder.YT_MUSIC_FIRST -> sortedBy {
-        when (it.source) { Source.YT_MUSIC -> 0; Source.YOUTUBE -> 1; Source.SOUNDCLOUD -> 2 }
-    }
-    SortOrder.YOUTUBE_FIRST -> sortedBy {
-        when (it.source) { Source.YOUTUBE -> 0; Source.YT_MUSIC -> 1; Source.SOUNDCLOUD -> 2 }
-    }
-    SortOrder.SOUNDCLOUD_FIRST -> sortedBy {
-        when (it.source) { Source.SOUNDCLOUD -> 0; Source.YT_MUSIC -> 1; Source.YOUTUBE -> 2 }
-    }
+    SortOrder.MUSIC_FIRST -> sortedBy { if (it.source == Source.YT_MUSIC) 0 else 1 }
+    SortOrder.VIDEOS_FIRST -> sortedBy { if (it.source == Source.YOUTUBE) 0 else 1 }
     SortOrder.DURATION -> sortedBy { parseDurationToSeconds(it.duration) }
 }
 
@@ -82,12 +80,17 @@ private fun parseDurationToSeconds(duration: String): Int {
 }
 
 @Composable
-fun SearchScreen(player: FFmpegPlayer, onArtistClick: (browseId: String, name: String) -> Unit) {
+fun SearchScreen(
+    provider: MusicProvider,
+    player: FFmpegPlayer,
+    onArtistClick: (browseId: String, name: String) -> Unit
+) {
     var query by remember { mutableStateOf("") }
     var rawResults by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     var artistResults by remember { mutableStateOf<List<ArtistResult>>(emptyList()) }
     var showAllArtists by remember { mutableStateOf(false) }
-    var sortOrder by remember { mutableStateOf(SortOrder.POPULARITY) }
+    var sortOrder by remember { mutableStateOf(if (provider.platform == Platform.YOUTUBE) SortOrder.POPULARITY else SortOrder.RELEVANCE) }
+    val sortOptions = remember(provider.platform) { SortOrder.forPlatform(provider.platform) }
     var loading by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -100,8 +103,11 @@ fun SearchScreen(player: FFmpegPlayer, onArtistClick: (browseId: String, name: S
             loading = true
             showAllArtists = false
             coroutineScope {
-                val songs = async { YoutubeMusic.search(query) }
-                val artists = async { YoutubeMusic.searchArtists(query) }
+                val songs = async { runCatching { provider.search(query) }.getOrDefault(emptyList()) }
+                val artists = async {
+                    if (provider.supportsArtists) runCatching { provider.searchArtists(query) }.getOrDefault(emptyList())
+                    else emptyList()
+                }
                 rawResults = songs.await()
                 artistResults = artists.await()
             }
@@ -115,7 +121,7 @@ fun SearchScreen(player: FFmpegPlayer, onArtistClick: (browseId: String, name: S
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("_search_modules;", color = PsSteel400, fontFamily = FontMono, fontSize = 13.sp) },
+                placeholder = { Text("_search_${provider.platform.label};", color = PsSteel400, fontFamily = FontMono, fontSize = 13.sp) },
                 singleLine = true,
                 shape = RoundedCornerShape(0.dp),
                 modifier = Modifier.weight(1f).onKeyEvent { e ->
@@ -166,7 +172,7 @@ fun SearchScreen(player: FFmpegPlayer, onArtistClick: (browseId: String, name: S
                         onDismissRequest = { sortExpanded = false },
                         modifier = Modifier.background(Surface)
                     ) {
-                        SortOrder.entries.forEach { option ->
+                        sortOptions.forEach { option ->
                             DropdownMenuItem(onClick = { sortOrder = option; sortExpanded = false }) {
                                 Text(
                                     option.label,
@@ -246,6 +252,7 @@ fun TrackRow(
     val active = currentTitle == result.videoId
     val enqueuing = isEnqueuing && active
     val canNavigateArtist = onArtistClick != null && result.artistId != null
+    val rowProvider = remember(result.source) { Providers.of(result.source) }
     val scope = rememberCoroutineScope()
     var buildingStation by remember { mutableStateOf(false) }
 
@@ -307,15 +314,15 @@ fun TrackRow(
         Spacer(Modifier.width(16.dp))
         Text(result.duration, color = PsSteel400, fontSize = 12.sp)
         Spacer(Modifier.width(10.dp))
-        if (result.source == Source.SOUNDCLOUD) {
+        if (rowProvider.supportsStations) {
             IconButton(
                 onClick = {
                     if (buildingStation) return@IconButton
                     buildingStation = true
                     scope.launch {
                         runCatching {
-                            val station = SoundCloud.stationFor(result)
-                            player.loadQueue(station.map { it.toQueueItem() }, 0)
+                            val station = rowProvider.station(result)
+                            if (station.isNotEmpty()) player.loadQueue(station.map { it.toQueueItem() }, 0)
                         }
                         buildingStation = false
                     }
