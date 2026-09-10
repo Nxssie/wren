@@ -15,7 +15,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.media3:media3-exoplayer:1.5.0")
     implementation("androidx.media3:media3-common:1.5.0")
+    implementation("androidx.media:media:1.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.browser:browser:1.8.0")
     debugImplementation("androidx.compose.ui:ui-tooling-preview:1.7.5")
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.5")
@@ -31,6 +34,16 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+
+        // Bundled Google OAuth client, same env vars CI uses for desktop. Desktop-app
+        // clients have no real secret (Google documents this), so baking it in is safe;
+        // users can still override it with <config>/oauth.json on device.
+        buildConfigField("String", "WREN_GOOGLE_CLIENT_ID", "\"${System.getenv("WREN_GOOGLE_CLIENT_ID") ?: ""}\"")
+        buildConfigField("String", "WREN_GOOGLE_CLIENT_SECRET", "\"${System.getenv("WREN_GOOGLE_CLIENT_SECRET") ?: ""}\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
