@@ -33,6 +33,17 @@ if [[ $tag != v* ]]; then
 fi
 version=${tag#v}
 
+# `gh release create` would make the tag itself at origin's HEAD if it does not exist, publishing
+# an APK attributed to a revision it was not built from. The remote tag has to already point at
+# this commit, so a release is never the thing that creates its own tag.
+head_sha=$(git rev-parse HEAD)
+ls_remote=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
+remote_sha=$(grep '\^{}$' <<<"$ls_remote" | cut -f1 || true)
+[ -n "$remote_sha" ] || remote_sha=$(cut -f1 <<<"$ls_remote")
+if [ "$remote_sha" != "$head_sha" ]; then
+  die "origin has no $tag at HEAD ($head_sha) — push the tag first: git push origin $tag"
+fi
+
 printf 'building wren %s…\n' "$version"
 ./gradlew :android:app:assembleRelease
 
@@ -56,5 +67,4 @@ else
   printf 'created release %s with %s\n' "$tag" "$(basename "$apk")"
 fi
 
-gh release view "$tag" --json assets \
-  | python3 -c 'import json,sys; [print(" asset:", a["name"]) for a in json.load(sys.stdin)["assets"]]'
+gh release view "$tag" --json assets --template '{{range .assets}} asset: {{.name}}{{"\n"}}{{end}}'
