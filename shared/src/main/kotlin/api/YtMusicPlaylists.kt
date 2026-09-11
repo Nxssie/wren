@@ -13,11 +13,47 @@ import models.ArtistResult
 import models.Playlist
 import models.PlaylistTrack
 import util.Http
+import util.Log
 
 private val ytApiJson = Json { ignoreUnknownKeys = true }
 
 private fun ytApiGet(url: String, token: String) =
     Http.get(url, headers = mapOf("Authorization" to "Bearer $token"))
+
+/** The Data API's own cap: `maxResults` above this is rejected, not clamped. */
+private const val YT_PAGE_SIZE = 50
+/** Bounds a runaway token: 100 pages is 5k items, past any realistic library. */
+private const val YT_MAX_PAGES = 100
+
+/**
+ * Walks a Data API list endpoint to its end through `nextPageToken`. Every page after the
+ * first carries the token, and a page is only [YT_PAGE_SIZE] items — which is exactly where
+ * the library lists used to stop.
+ *
+ * Null means the *first* page failed, so callers can keep their own fallback; a failure later
+ * on returns what was collected, because a short list beats an empty one.
+ */
+private suspend fun ytApiPages(url: String, token: String): List<JsonObject>? {
+    val items = mutableListOf<JsonObject>()
+    var pageToken: String? = null
+    var pages = 0
+    while (true) {
+        val response = ytApiGet(url + (pageToken?.let { "&pageToken=$it" } ?: ""), token)
+        val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
+        if (response.code != 200 || root == null) {
+            if (items.isEmpty()) return null
+            Log.w("YtMusic", "listing $url stopped early after $pages page(s), code ${response.code}")
+            return items
+        }
+        root["items"]?.jsonArray?.forEach { items += it.jsonObject }
+        pageToken = root["nextPageToken"]?.jsonPrimitive?.contentOrNull
+        if (pageToken == null) return items
+        if (++pages >= YT_MAX_PAGES) {
+            Log.w("YtMusic", "stopped listing $url after $YT_MAX_PAGES pages")
+            return items
+        }
+    }
+}
 
 private val playlistHeaders = mapOf(
     "Content-Type" to "application/json",
@@ -31,15 +67,11 @@ private val playlistHeaders = mapOf(
 suspend fun fetchUserPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
     GoogleAuth.ensureValidToken()
     val token = GoogleAuth.accessToken ?: return@withContext emptyList()
-    val response = ytApiGet(
-        "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50",
+    val items = ytApiPages(
+        "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=$YT_PAGE_SIZE",
         token,
-    )
-    if (response.code != 200) return@withContext savedPlaylists()
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
-        ?: return@withContext savedPlaylists()
-    val playlists = root["items"]?.jsonArray?.mapNotNull { item ->
-        val obj = item.jsonObject
+    ) ?: return@withContext savedPlaylists()
+    val playlists = items.mapNotNull { obj ->
         val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
         val snippet = obj["snippet"]?.jsonObject ?: return@mapNotNull null
         val title = snippet["title"]?.jsonPrimitive?.content ?: return@mapNotNull null
@@ -48,7 +80,7 @@ suspend fun fetchUserPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
             ?.let { it["maxres"] ?: it["standard"] ?: it["high"] ?: it["medium"] ?: it["default"] }?.jsonObject
             ?.get("url")?.jsonPrimitive?.content ?: ""
         Playlist(id, title, itemCount, thumbUrl)
-    } ?: emptyList()
+    }
 
     // Override with actual YT Music cover art by browsing each playlist (unauthenticated InnerTube)
     val ytMusicThumbs: Map<String, String> = coroutineScope {
@@ -88,16 +120,18 @@ suspend fun fetchSavedPlaylists(): List<Playlist> = withContext(Dispatchers.IO) 
 /** InnerTube cards carry no channel name, so the owning channel comes from the Data API. */
 private suspend fun fetchPlaylistOwners(playlistIds: List<String>, token: String): Map<String, String> {
     if (playlistIds.isEmpty()) return emptyMap()
-    val response = ytApiGet(
-        "https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistIds.joinToString(",")}",
-        token,
-    )
-    if (response.code != 200) return emptyMap()
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
-        ?: return emptyMap()
-    return root["items"]?.jsonArray.orEmpty().mapNotNull { item ->
-        val id = item.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-        val owner = item.jsonObject["snippet"]?.jsonObject?.get("channelTitle")?.jsonPrimitive?.contentOrNull
+    return playlistIds.chunked(YT_PAGE_SIZE).flatMap { chunk ->
+        val response = ytApiGet(
+            "https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${chunk.joinToString(",")}",
+            token,
+        )
+        if (response.code != 200) return@flatMap emptyList()
+        runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
+            ?.get("items")?.jsonArray.orEmpty()
+            .map { it.jsonObject }
+    }.mapNotNull { item ->
+        val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+        val owner = item["snippet"]?.jsonObject?.get("channelTitle")?.jsonPrimitive?.contentOrNull
         owner?.let { id to it }
     }.toMap()
 }
@@ -276,15 +310,11 @@ suspend fun fetchSubscribedChannels(): List<ArtistResult> = coroutineScope {
 private suspend fun fetchAllSubscriptions(): List<ArtistResult> = withContext(Dispatchers.IO) {
     GoogleAuth.ensureValidToken()
     val token = GoogleAuth.accessToken ?: return@withContext emptyList()
-    val response = ytApiGet(
-        "https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&maxResults=50",
+    ytApiPages(
+        "https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&maxResults=$YT_PAGE_SIZE",
         token,
-    )
-    if (response.code != 200) return@withContext emptyList()
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
-        ?: return@withContext emptyList()
-    root["items"]?.jsonArray?.mapNotNull { item ->
-        val snippet = item.jsonObject["snippet"]?.jsonObject ?: return@mapNotNull null
+    ).orEmpty().mapNotNull { obj ->
+        val snippet = obj["snippet"]?.jsonObject ?: return@mapNotNull null
         val browseId = snippet["resourceId"]?.jsonObject?.get("channelId")?.jsonPrimitive?.content
             ?: return@mapNotNull null
         val name = snippet["title"]?.jsonPrimitive?.content ?: return@mapNotNull null
@@ -292,7 +322,7 @@ private suspend fun fetchAllSubscriptions(): List<ArtistResult> = withContext(Di
             ?.let { it["high"] ?: it["medium"] ?: it["default"] }?.jsonObject
             ?.get("url")?.jsonPrimitive?.content
         ArtistResult(browseId, name, thumbUrl, "channel")
-    } ?: emptyList()
+    }
 }
 
 /**
@@ -302,14 +332,12 @@ private suspend fun fetchAllSubscriptions(): List<ArtistResult> = withContext(Di
  */
 suspend fun fetchPlaylistTracks(playlistId: String, musicOnly: Boolean = false): List<PlaylistTrack> = withContext(Dispatchers.IO) {
     val token = GoogleAuth.accessToken ?: return@withContext emptyList()
-    val response = ytApiGet(
-        "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=$playlistId&maxResults=50",
+    val items = ytApiPages(
+        "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=$playlistId&maxResults=$YT_PAGE_SIZE",
         token,
-    )
-    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
-        ?: return@withContext emptyList()
-    val tracks = root["items"]?.jsonArray?.mapNotNull { item ->
-        val snippet = item.jsonObject["snippet"]?.jsonObject ?: return@mapNotNull null
+    ).orEmpty()
+    val tracks = items.mapNotNull { obj ->
+        val snippet = obj["snippet"]?.jsonObject ?: return@mapNotNull null
         val videoId = snippet["resourceId"]?.jsonObject?.get("videoId")?.jsonPrimitive?.content
             ?: return@mapNotNull null
         val title = snippet["title"]?.jsonPrimitive?.content ?: return@mapNotNull null
@@ -321,30 +349,38 @@ suspend fun fetchPlaylistTracks(playlistId: String, musicOnly: Boolean = false):
             ?.get("url")?.jsonPrimitive?.content
             ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
         PlaylistTrack(videoId, title, channelTitle, thumbUrl)
-    } ?: emptyList()
+    }
 
     if (tracks.isEmpty()) return@withContext tracks
-    val ids = tracks.joinToString(",") { it.videoId }
-    val videoResponse = ytApiGet(
-        "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=$ids",
-        token,
-    )
-    val videoRoot = runCatching { ytApiJson.parseToJsonElement(videoResponse.body).jsonObject }.getOrNull()
-    val videoItems = videoRoot?.get("items")?.jsonArray
-    if (videoItems == null && musicOnly) return@withContext emptyList()  // cannot verify, cannot show
+    // videos.list takes 50 ids at a time, so a full liked-songs list needs several round trips;
+    // they run a few at a time because a serial walk of them is what makes the library crawl.
+    val byId = coroutineScope {
+        val gate = Semaphore(4)
+        tracks.map { it.videoId }.distinct().chunked(YT_PAGE_SIZE).map { chunk ->
+            async {
+                gate.withPermit {
+                    val response = ytApiGet(
+                        "https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${chunk.joinToString(",")}",
+                        token,
+                    )
+                    runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
+                        ?.get("items")?.jsonArray.orEmpty()
+                        .map { it.jsonObject }
+                }
+            }
+        }.awaitAll().flatten()
+    }.associateBy { it["id"]?.jsonPrimitive?.content ?: "" }
 
-    val byId = videoItems.orEmpty().associate { item ->
-        val id = item.jsonObject["id"]?.jsonPrimitive?.content ?: ""
-        id to item.jsonObject
-    }
+    if (byId.isEmpty() && musicOnly) return@withContext emptyList()  // cannot verify, cannot show
+
     if (musicOnly) {
-        val ownerByVideoId = root["items"]?.jsonArray?.associate { item ->
-            val snippet = item.jsonObject["snippet"]?.jsonObject
+        val topicOwners = items.associate { obj ->
+            val snippet = obj["snippet"]?.jsonObject
             val id = snippet?.get("resourceId")?.jsonObject?.get("videoId")?.jsonPrimitive?.content ?: ""
             id to ((snippet?.get("videoOwnerChannelTitle")?.jsonPrimitive?.content ?: "").endsWith(" - Topic"))
-        } ?: emptyMap()
+        }
         tracks.filter { track ->
-            val isTopic = ownerByVideoId[track.videoId] == true
+            val isTopic = topicOwners[track.videoId] == true
             isTopic || (byId[track.videoId]?.get("snippet")?.jsonObject
                 ?.get("categoryId")?.jsonPrimitive?.content == "10")
         }
