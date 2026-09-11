@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import models.toQueueItem
 import player.PlayerEngine
+import util.runCatchingExceptCancellation
 import provider.DiscoverCollection
 import provider.DiscoverSection
 import provider.MusicProvider
@@ -31,7 +32,7 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
 
     LaunchedEffect(provider) {
         loading = true
-        sections = runCatching { provider.discover() }.getOrDefault(emptyList())
+        sections = runCatchingExceptCancellation { provider.discover() }.getOrDefault(emptyList())
         loading = false
     }
 

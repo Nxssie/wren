@@ -32,6 +32,7 @@ import models.toQueueItem
 import player.PlayerEngine
 import provider.MusicProvider
 import util.connectMessage
+import util.runCatchingExceptCancellation
 
 private enum class LibraryTab(val label: String) {
     SONGS("songs"),
@@ -90,7 +91,7 @@ fun LibraryScreen(
     LaunchedEffect(provider, tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            val result = runCatching { provider.librarySongs() }
+            val result = runCatchingExceptCancellation { provider.librarySongs() }
             songs = result.getOrNull()
             songsError = result.exceptionOrNull()?.connectMessage()
             loading = false
@@ -98,14 +99,14 @@ fun LibraryScreen(
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
-            val result = runCatching { provider.playlists() }
+            val result = runCatchingExceptCancellation { provider.playlists() }
             playlists = result.getOrNull()
             playlistsError = result.exceptionOrNull()?.connectMessage()
             loading = false
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            val result = runCatching { provider.libraryArtists() }
+            val result = runCatchingExceptCancellation { provider.libraryArtists() }
             artists = result.getOrNull()
             artistsError = result.exceptionOrNull()?.connectMessage()
             loading = false
@@ -115,7 +116,7 @@ fun LibraryScreen(
     fun loadPlaylistTracks(playlist: Playlist) {
         scope.launch {
             loading = true
-            val result = runCatching { provider.playlistTracks(playlist.id) }
+            val result = runCatchingExceptCancellation { provider.playlistTracks(playlist.id) }
             tracks = result.getOrNull().orEmpty()
             tracksError = result.exceptionOrNull()?.connectMessage()
             loading = false
