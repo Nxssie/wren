@@ -59,6 +59,13 @@ class FFmpegPlayer {
     private var audioLine: SourceDataLine? = null
     private val audioLock = Any()
 
+    // Level normalisation: one gain for the whole track, from the level measured the last time
+    // it played; the meter re-measures it as it plays so that gain keeps up to date.
+    private val loudnessMeter = LoudnessMeter()
+    // Volatile: written when a track loads, read by the playback loop and by stop().
+    @Volatile private var normalisationGain = 1.0f
+    @Volatile private var measuredVideoId: String? = null
+
     // Playback state
     private var playbackJob: Job? = null
     private val isPlayingInternal = AtomicBoolean(false)
@@ -82,6 +89,8 @@ class FFmpegPlayer {
     }
 
     fun stop() {
+        // Straight to disk: the scope is cancelled on the next line.
+        writeLoudness()
         scope.cancel()
         runBlocking { stopPlayback() }
         synchronized(audioLock) {
@@ -254,6 +263,14 @@ class FFmpegPlayer {
         // Stop any existing playback (waits for old playLoop to fully exit)
         eofReached.set(false)
         stopPlayback()
+        // The loop is cancelled, so its own final write is skipped on a skip: keep the level of
+        // the track that just stopped before the meter is handed to the next one.
+        writeLoudness()
+
+        // 1.0 until this track has been measured once (it is measured as it plays below).
+        measuredVideoId = videoId
+        normalisationGain = LoudnessStore.gain(videoId) ?: 1.0f
+        loudnessMeter.reset()
 
         // Reuse the preloaded grabber if it's for this exact track (gapless transition).
         // Any other pending preload is now stale (user skipped/jumped elsewhere) — release it.
@@ -329,6 +346,17 @@ class FFmpegPlayer {
                 }
             }
         }
+    }
+
+    /** Writes the running measurement for the track playing now, off the playback thread. */
+    private fun publishLoudness() {
+        scope.launch { writeLoudness() }
+    }
+
+    private fun writeLoudness() {
+        val videoId = measuredVideoId ?: return
+        val measurement = loudnessMeter.measurement() ?: return
+        LoudnessStore.record(videoId, measurement)
     }
 
     /** Configures and connects a grabber against a resolved stream URL. */
@@ -455,12 +483,9 @@ class FFmpegPlayer {
         var lastFrameTime = System.currentTimeMillis()
         var hasReceivedFrame = false
 
-        // Auto-level loudness across tracks: nudge a smoothed gain so each track's short-term
-        // RMS approaches a common target, instead of every track playing at its native level.
-        var agcGain = 1.0f
-        val targetRms = 6000f
-        val agcSmoothing = 0.02f
-        val agcGainRange = 0.5f..2.0f
+        // Publishing the running measurement every few seconds means a track skipped halfway
+        // still leaves a usable level behind; it sharpens the more of the song gets played.
+        var lastLoudnessPersistMs = 0L
 
         // Fade the first/last few seconds of a track in/out. The gapless preload already
         // removes the silent gap between tracks, so this is what actually smooths the
@@ -500,21 +525,23 @@ class FFmpegPlayer {
                     if (remaining > 0) {
                         val (bytes, len) = bufferToBytes(sampleBuffer)
                         if (len > 0) {
-                            // Estimate this chunk's loudness and slowly steer agcGain toward
-                            // whatever gain would bring it to targetRms (clamped so near-silent
-                            // passages don't get amplified into audible noise).
+                            // Measure the chunk for this track's stored level. Always pre-gain:
+                            // measuring what was played back would compound the correction.
                             var sumSq = 0.0
+                            var peakAbs = 0
                             var i = 0
                             while (i < len) {
-                                val s = ((bytes[i].toInt() and 0xFF) or ((bytes[i + 1].toInt() and 0xFF) shl 8)).toShort()
-                                sumSq += s.toDouble() * s.toDouble()
+                                val s = ((bytes[i].toInt() and 0xFF) or ((bytes[i + 1].toInt() and 0xFF) shl 8)).toShort().toInt()
+                                sumSq += s.toDouble() * s
+                                peakAbs = maxOf(peakAbs, kotlin.math.abs(s))
                                 i += 2
                             }
-                            val sampleCount = len / 2
-                            if (sampleCount > 0) {
-                                val rms = kotlin.math.sqrt(sumSq / sampleCount).toFloat().coerceAtLeast(1f)
-                                val desiredGain = (targetRms / rms).coerceIn(agcGainRange)
-                                agcGain += (desiredGain - agcGain) * agcSmoothing
+                            loudnessMeter.accept(sumSq, (len / 2).toLong(), peakAbs)
+
+                            val now = System.currentTimeMillis()
+                            if (now - lastLoudnessPersistMs >= LOUDNESS_PERSIST_MS) {
+                                lastLoudnessPersistMs = now
+                                publishLoudness()
                             }
 
                             val dur = duration.value
@@ -522,7 +549,7 @@ class FFmpegPlayer {
                             val fadeIn = if (pos < fadeSeconds) (pos / fadeSeconds).toFloat().coerceIn(0f, 1f) else 1f
                             val fadeOut = if (dur > 0 && dur - pos < fadeSeconds) ((dur - pos) / fadeSeconds).toFloat().coerceIn(0f, 1f) else 1f
 
-                            val gain = digitalVolume * agcGain * fadeIn * fadeOut
+                            val gain = digitalVolume * normalisationGain * fadeIn * fadeOut
                             if (gain != 1.0f) {
                                 for (b in 0 until len step 2) {
                                     val sample = ((bytes[b].toInt() and 0xFF) or ((bytes[b + 1].toInt() and 0xFF) shl 8)).toShort()
@@ -542,6 +569,9 @@ class FFmpegPlayer {
                 }
             }
         }
+
+        // The track is over: keep its full measurement before the next load resets the meter.
+        writeLoudness()
 
         // Drain remaining audio
         line.drain()
@@ -701,4 +731,8 @@ class FFmpegPlayer {
 
     @Volatile
     private var digitalVolume: Float = 1.0f
+
+    private companion object {
+        const val LOUDNESS_PERSIST_MS = 5_000L
+    }
 }
