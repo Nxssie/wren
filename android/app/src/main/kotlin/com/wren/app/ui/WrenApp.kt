@@ -79,9 +79,12 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
 
     // A tap on the widget means "show me what is playing". At a cold start there is nothing to
     // go back to, so it becomes the entry tab; otherwise it is pushed, so back returns to
-    // whatever the user was doing.
+    // whatever the user was doing. The overlays sit above the tabs, so they have to close
+    // first or the request would land behind whichever one was open.
     LaunchedEffect(openNowPlaying.value) {
         if (!openNowPlaying.value) return@LaunchedEffect
+        showAccounts = false
+        showSoundcloudLogin = false
         if (tabHistory.isEmpty()) tab = WrenTab.NOW_PLAYING else navigate(WrenTab.NOW_PLAYING)
         openNowPlaying.value = false
     }
@@ -146,8 +149,9 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
             )
         }
 
+        // No back handler here: SoundCloudLoginScreen's own (composed last, so it wins) walks
+        // the WebView back first and only then cancels — to the same place this would go.
         if (showSoundcloudLogin) {
-            BackHandler { showSoundcloudLogin = false; showAccounts = true }
             Box(Modifier.fillMaxSize().background(Background)) {
                 SoundCloudLoginScreen(
                     onDone = {
