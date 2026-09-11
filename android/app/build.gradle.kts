@@ -25,6 +25,30 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling:1.7.5")
 }
 
+/**
+ * `versionCode` has to grow for an install to replace the previous build, and the commit count
+ * does that without anyone remembering to bump a number. `versionName` keeps the `git describe`
+ * string, so a build installed on a phone says which revision it came from. Both are overridable
+ * from the environment, which is what a tagged release (or CI) would use.
+ *
+ * A missing or shallow git checkout falls back to 1 / "1.0.0" instead of failing the build.
+ */
+val gitDescription: String? = runCatching {
+    providers.exec {
+        commandLine("git", "describe", "--tags", "--always", "--dirty")
+        workingDir = rootProject.projectDir
+        isIgnoreExitValue = true
+    }.standardOutput.asText.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+}.getOrNull()
+
+val gitCommitCount: Int = runCatching {
+    providers.exec {
+        commandLine("git", "rev-list", "--count", "HEAD")
+        workingDir = rootProject.projectDir
+        isIgnoreExitValue = true
+    }.standardOutput.asText.getOrNull()?.trim()?.toIntOrNull()
+}.getOrNull() ?: 1
+
 android {
     namespace = "com.wren.app"
     compileSdk = 35
@@ -33,8 +57,10 @@ android {
         applicationId = "com.wren.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = System.getenv("WREN_VERSION_CODE")?.toIntOrNull() ?: gitCommitCount
+        versionName = System.getenv("WREN_VERSION_NAME")
+            ?: gitDescription?.removePrefix("v")
+            ?: "1.0.0"
 
         // Bundled Google OAuth client, same env vars CI uses for desktop. Desktop-app
         // clients have no real secret (Google documents this), so baking it in is safe;
@@ -52,10 +78,10 @@ android {
     // unaffected. See the README for the `keytool` line and the variable names.
     signingConfigs {
         create("release") {
-            val store = System.getenv("WREN_KEYSTORE")
-            val storePassword = System.getenv("WREN_KEYSTORE_PASSWORD")
-            val alias = System.getenv("WREN_KEY_ALIAS")
-            val keyPassword = System.getenv("WREN_KEY_PASSWORD")
+            val store = System.getenv("WREN_RELEASE_KEYSTORE_PATH")
+            val storePassword = System.getenv("WREN_RELEASE_KEYSTORE_PASSWORD")
+            val alias = System.getenv("WREN_RELEASE_KEY_ALIAS")
+            val keyPassword = System.getenv("WREN_RELEASE_KEY_PASSWORD")
             if (store != null && storePassword != null && alias != null && keyPassword != null) {
                 storeFile = file(store)
                 this.storePassword = storePassword

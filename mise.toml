@@ -1,0 +1,22 @@
+[tools]
+# The Android/desktop toolchain asks for a Java 21 toolchain (see the jvmToolchain calls), and
+# Gradle itself has to run on it: the Kotlin compile daemon fails to parse the version string
+# of newer JDKs. Pin it here so `mise run` and any shell in this directory just work.
+java = "21.0.2"
+
+[tasks."android:apk"]
+description = "Build the signed release APK"
+run = "./gradlew :android:app:assembleRelease"
+
+[tasks."android:apk-debug"]
+description = "Build the debug APK"
+run = "./gradlew :android:app:assembleDebug"
+
+[tasks."android:install"]
+description = "Install the release APK on the connected device"
+depends = ["android:apk"]
+run = "./gradlew :android:app:installRelease"
+
+[tasks.test]
+description = "Run the JVM test suites"
+run = "./gradlew :shared:test :desktop:test"

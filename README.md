@@ -148,21 +148,26 @@ it is the only thing that can update an installed app in place.
 ```bash
 keytool -genkeypair -v -keystore ~/.android/keys/wren-release.jks -storetype PKCS12 \
   -alias wren -keyalg RSA -keysize 4096 -validity 10000 \
-  -storepass "$WREN_KEYSTORE_PASSWORD" -keypass "$WREN_KEYSTORE_PASSWORD" -dname "CN=wren"
+  -storepass "$WREN_RELEASE_KEYSTORE_PASSWORD" -keypass "$WREN_RELEASE_KEYSTORE_PASSWORD" -dname "CN=wren"
 ```
 
-Then build it (the four variables come from the environment, never from the repo — see the
-secrets note in `AGENTS.md`). With them unset the release task still succeeds and produces an
-unsigned APK:
+Then build it. Credentials come from the environment, never from the repo (`AGENTS.md` has the
+secrets convention), and the signing config is skipped — producing an unsigned APK — when they
+are unset:
 
 ```bash
-./gradlew :android:app:assembleRelease
+mise run android:apk          # or: ./gradlew :android:app:assembleRelease
 adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
 
-Note: PKCS12 keystores use one password for the store and the key, so `WREN_KEY_PASSWORD` and
-`WREN_KEYSTORE_PASSWORD` hold the same value. Signing with a different key than an installed
-build already uses needs an uninstall first.
+Variables: `WREN_RELEASE_KEYSTORE_PATH`, `WREN_RELEASE_KEYSTORE_PASSWORD`,
+`WREN_RELEASE_KEY_ALIAS`, `WREN_RELEASE_KEY_PASSWORD`. PKCS12 uses one password for the store
+and the key, so the two password variables hold the same value. Signing with a different key
+than an installed build already uses needs an uninstall first.
+
+`versionCode` counts commits and `versionName` is the `git describe` string, so a build
+already installed on a phone can be replaced without uninstalling. Both accept an override in
+`WREN_VERSION_CODE` / `WREN_VERSION_NAME` (what a tagged release would use).
 
 Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
 and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).
