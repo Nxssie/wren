@@ -8,8 +8,13 @@ import models.ArtistResult
 import models.SearchResult
 import models.Source
 import util.Http
+import util.Log
 
 private val json = Json { ignoreUnknownKeys = true }
+
+// A search that fails and a search that finds nothing must not look the same in the log: the
+// access failure used to be swallowed, so a blocked request was indistinguishable from no hits.
+private const val TAG = "YtMusicSearch"
 
 // API_KEY removed — use ApiKeyManager.ytMusicKey instead
 private const val CLIENT_VERSION = "1.20220918.01.00"
@@ -43,11 +48,21 @@ suspend fun searchYouTubeMusic(query: String, limit: Int): List<SearchResult> = 
 
     // OAuth token not sent — InnerTube rejects tokens from unrecognized clients
     val response = Http.post(musicSearchUrl(), body, headers = musicHeaders)
+    if (!response.isSuccessful) {
+        Log.w(TAG, "search returned ${response.code}: ${response.body.excerpt()}")
+        return@withContext emptyList()
+    }
     parseResults(response.body, limit)
 }
 
+private fun String.excerpt() = take(200).replace('\n', ' ')
+
 private fun parseResults(body: String, limit: Int): List<SearchResult> {
-    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyList()
+    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+    if (root == null) {
+        Log.w(TAG, "unparseable search body: ${body.excerpt()}")
+        return emptyList()
+    }
 
     val tabs = root.dig("contents", "tabbedSearchResultsRenderer", "tabs")?.jsonArray ?: return emptyList()
     val sections = tabs.firstOrNull()
@@ -102,7 +117,12 @@ suspend fun searchYouTubeMusicArtists(query: String): List<ArtistResult> = withC
         put("params", ARTISTS_PARAMS)
     }.toString()
 
-    parseArtistResults(Http.post(musicSearchUrl(), body, headers = musicHeaders).body)
+    val response = Http.post(musicSearchUrl(), body, headers = musicHeaders)
+    if (!response.isSuccessful) {
+        Log.w(TAG, "artist search returned ${response.code}: ${response.body.excerpt()}")
+        return@withContext emptyList()
+    }
+    parseArtistResults(response.body, "artist search")
 }
 
 suspend fun searchYouTubeMusicArtistsFromGeneral(query: String): List<ArtistResult> = withContext(Dispatchers.IO) {
@@ -117,11 +137,20 @@ suspend fun searchYouTubeMusicArtistsFromGeneral(query: String): List<ArtistResu
         put("query", query)
     }.toString()
 
-    parseArtistsFromGeneralSearch(Http.post(musicSearchUrl(), body, headers = musicHeaders).body)
+    val response = Http.post(musicSearchUrl(), body, headers = musicHeaders)
+    if (!response.isSuccessful) {
+        Log.w(TAG, "general artist search returned ${response.code}: ${response.body.excerpt()}")
+        return@withContext emptyList()
+    }
+    parseArtistsFromGeneralSearch(response.body, "general artist search")
 }
 
-private fun parseArtistsFromGeneralSearch(body: String): List<ArtistResult> {
-    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyList()
+private fun parseArtistsFromGeneralSearch(body: String, what: String): List<ArtistResult> {
+    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+    if (root == null) {
+        Log.w(TAG, "unparseable $what body: ${body.excerpt()}")
+        return emptyList()
+    }
     val tabs = root.dig("contents", "tabbedSearchResultsRenderer", "tabs")?.jsonArray ?: return emptyList()
     val sections = tabs.firstOrNull()
         ?.dig("tabRenderer", "content", "sectionListRenderer", "contents")
@@ -171,8 +200,12 @@ private fun parseArtistsFromGeneralSearch(body: String): List<ArtistResult> {
     return results
 }
 
-private fun parseArtistResults(body: String): List<ArtistResult> {
-    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyList()
+private fun parseArtistResults(body: String, what: String): List<ArtistResult> {
+    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+    if (root == null) {
+        Log.w(TAG, "unparseable $what body: ${body.excerpt()}")
+        return emptyList()
+    }
     val tabs = root.dig("contents", "tabbedSearchResultsRenderer", "tabs")?.jsonArray ?: return emptyList()
     val sections = tabs.firstOrNull()
         ?.dig("tabRenderer", "content", "sectionListRenderer", "contents")
