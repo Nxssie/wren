@@ -20,6 +20,7 @@ internal fun <T> pagedFlow(
     page: suspend (cursor: String?) -> Page<T>,
 ): Flow<List<T>> = flow {
     cache.peek(key)?.let { cached ->
+        Log.i(tag, "listing $key from cache: ${cached.size}")
         emit(cached)
         return@flow
     }
@@ -30,6 +31,7 @@ internal fun <T> pagedFlow(
     while (true) {
         val next = page(cursor)
         accumulated += next.items
+        Log.i(tag, "listing $key page ${pages + 1}: ${next.items.size} items, ${accumulated.size} so far")
         emit(accumulated.toList())
 
         cursor = next.next ?: break

@@ -90,12 +90,13 @@ fun LibraryScreen(
                 .catch { failure -> songsError = failure.connectMessage(); loading = false }
                 .collect { page ->
                     songs = page
-                    loading = false
+                    if (page.isNotEmpty()) loading = false
                     if (!prefetched) {
                         prefetched = true
                         page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
                     }
                 }
+            loading = false
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
@@ -108,7 +109,8 @@ fun LibraryScreen(
             loading = true
             provider.libraryArtistsFlow()
                 .catch { failure -> artistsError = failure.connectMessage(); loading = false }
-                .collect { page -> artists = page; loading = false }
+                .collect { page -> artists = page; if (page.isNotEmpty()) loading = false }
+            loading = false
         }
     }
 
@@ -121,12 +123,13 @@ fun LibraryScreen(
                 .catch { failure -> tracksError = failure.connectMessage(); loading = false }
                 .collect { page ->
                     tracks = page
-                    loading = false
+                    if (page.isNotEmpty()) loading = false
                     if (!prefetched) {
                         prefetched = true
                         page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
                     }
                 }
+            loading = false
         }
     }
 

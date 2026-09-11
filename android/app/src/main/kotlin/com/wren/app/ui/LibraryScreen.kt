@@ -100,13 +100,15 @@ fun LibraryScreen(
                 .catch { failure -> songsError = failure.connectMessage(); loading = false }
                 .collect { page ->
                     songs = page
-                    loading = false
-                    // Streaming URLs for what is on screen, once: later pages keep their own.
+                    // A page can arrive empty — the first fifty likes may hold no music at all —
+                    // and that is not an answer until the walk is over.
+                    if (page.isNotEmpty()) loading = false
                     if (!prefetched) {
                         prefetched = true
                         page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
                     }
                 }
+            loading = false
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
@@ -119,7 +121,8 @@ fun LibraryScreen(
             loading = true
             provider.libraryArtistsFlow()
                 .catch { failure -> artistsError = failure.connectMessage(); loading = false }
-                .collect { page -> artists = page; loading = false }
+                .collect { page -> artists = page; if (page.isNotEmpty()) loading = false }
+            loading = false
         }
     }
 
@@ -129,7 +132,8 @@ fun LibraryScreen(
             loading = true
             provider.playlistTracksFlow(playlist.id)
                 .catch { failure -> tracksError = failure.connectMessage(); loading = false }
-                .collect { page -> tracks = page; loading = false }
+                .collect { page -> tracks = page; if (page.isNotEmpty()) loading = false }
+            loading = false
         }
     }
 
