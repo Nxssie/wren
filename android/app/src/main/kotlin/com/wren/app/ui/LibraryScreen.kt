@@ -20,7 +20,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import api.SoundCloudLikes
 import api.resolveStreamUrl
+import provider.Platform
 import kotlinx.coroutines.launch
 import models.ArtistResult
 import models.Playlist
@@ -60,6 +62,11 @@ fun LibraryScreen(
 
     val queue by engine.queue.collectAsState()
     val queueIndex by engine.queueIndex.collectAsState()
+    val liked by SoundCloudLikes.liked.collectAsState()
+    val canLike = provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
+    val onLike: ((PlaylistTrack) -> Unit)? = if (canLike) {
+        { track -> scope.launch { SoundCloudLikes.toggle(track.url) } }
+    } else null
     val currentId = queue.getOrNull(queueIndex)?.videoId
 
     if (!provider.isAuthenticated) {
@@ -112,11 +119,11 @@ fun LibraryScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            PlaylistTrackList(tracks, loading, engine, currentId, "this playlist is empty", queueTitle = open.title)
+            PlaylistTrackList(tracks, loading, engine, currentId, "this playlist is empty", queueTitle = open.title, liked = liked, onLike = onLike)
         } else {
             LibraryTabSelector(tabs, tab) { tab = it }
             when (tab) {
-                LibraryTab.SONGS -> PlaylistTrackList(songs, loading, engine, currentId, "no liked songs yet", queueTitle = "liked songs")
+                LibraryTab.SONGS -> PlaylistTrackList(songs, loading, engine, currentId, "no liked songs yet", queueTitle = "liked songs", liked = liked, onLike = onLike)
                 LibraryTab.PLAYLISTS -> PlaylistList(playlists, loading) { playlist ->
                     selectedPlaylist = playlist
                     scope.launch {
@@ -166,6 +173,8 @@ private fun PlaylistTrackList(
     currentId: String?,
     emptyHint: String,
     queueTitle: String,
+    liked: Set<String>,
+    onLike: ((PlaylistTrack) -> Unit)?,
 ) {
     when {
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -182,6 +191,8 @@ private fun PlaylistTrackList(
                     artworkUrl = item.thumbnailUrl.ifBlank { null },
                     highlight = item.videoId == currentId,
                     onClick = { engine.loadQueue(list.map { it.toQueueItem() }, index, queueTitle) },
+                    liked = if (onLike != null) item.url in liked else null,
+                    onLike = onLike?.let { like -> { like(item) } },
                 )
             }
         }
@@ -199,7 +210,8 @@ private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playl
             items(list, key = { it.id }) { playlist ->
                 TrackRow(
                     title = playlist.title,
-                    subtitle = "${playlist.itemCount} songs",
+                    subtitle = playlist.owner?.let { "${playlist.itemCount} songs · $it" }
+                        ?: "${playlist.itemCount} songs",
                     artworkUrl = playlist.thumbnailUrl.ifBlank { null },
                     onClick = { onOpen(playlist) },
                 )

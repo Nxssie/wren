@@ -35,9 +35,9 @@ suspend fun fetchUserPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
         "https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50",
         token,
     )
-    if (response.code != 200) return@withContext emptyList()
+    if (response.code != 200) return@withContext savedPlaylists()
     val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
-        ?: return@withContext emptyList()
+        ?: return@withContext savedPlaylists()
     val playlists = root["items"]?.jsonArray?.mapNotNull { item ->
         val obj = item.jsonObject
         val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
@@ -58,11 +58,142 @@ suspend fun fetchUserPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
             .mapNotNull { (id, url) -> url?.let { id to it } }
             .toMap()
     }
-    if (ytMusicThumbs.isEmpty()) return@withContext playlists
-    playlists.map { playlist ->
+    val withCovers = if (ytMusicThumbs.isEmpty()) playlists else playlists.map { playlist ->
         ytMusicThumbs[playlist.id]?.let { playlist.copy(thumbnailUrl = it) } ?: playlist
     }
+
+    // The Data API only knows about playlists owned by this channel, so anything saved
+    // from other creators has to come from the authenticated Music InnerTube browse.
+    val ownedIds = withCovers.map { it.id }.toHashSet()
+    withCovers + savedPlaylists().filter { playlist -> playlist.id !in ownedIds }
 }
+
+private suspend fun savedPlaylists(): List<Playlist> = runCatching { fetchSavedPlaylists() }
+    .getOrDefault(emptyList())
+
+/**
+ * Playlists the user saved from other creators. Sent with the Google token as a Bearer
+ * against Music's InnerTube, which is the only surface that exposes saved playlists.
+ */
+suspend fun fetchSavedPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
+    GoogleAuth.ensureValidToken()
+    val token = GoogleAuth.accessToken ?: return@withContext emptyList()
+    val saved = listOf("FEmusic_liked_playlists", "FEmusic_playlists").firstNotNullOfOrNull { browseId ->
+        runCatching { browseLibraryPlaylists(browseId, token) }.getOrNull()?.takeIf { it.isNotEmpty() }
+    } ?: return@withContext emptyList()
+    val owners = fetchPlaylistOwners(saved.map { it.id }, token)
+    saved.map { playlist -> owners[playlist.id]?.let { playlist.copy(owner = it) } ?: playlist }
+}
+
+/** InnerTube cards carry no channel name, so the owning channel comes from the Data API. */
+private suspend fun fetchPlaylistOwners(playlistIds: List<String>, token: String): Map<String, String> {
+    if (playlistIds.isEmpty()) return emptyMap()
+    val response = ytApiGet(
+        "https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistIds.joinToString(",")}",
+        token,
+    )
+    if (response.code != 200) return emptyMap()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
+        ?: return emptyMap()
+    return root["items"]?.jsonArray.orEmpty().mapNotNull { item ->
+        val id = item.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+        val owner = item.jsonObject["snippet"]?.jsonObject?.get("channelTitle")?.jsonPrimitive?.contentOrNull
+        owner?.let { id to it }
+    }.toMap()
+}
+
+private suspend fun browseLibraryPlaylists(browseId: String, token: String): List<Playlist> {
+    val body = buildJsonObject {
+        putJsonObject("context") {
+            putJsonObject("client") {
+                put("clientName", "WEB_REMIX")
+                put("clientVersion", "1.20220918.01.00")
+                put("hl", "en")
+            }
+        }
+        put("browseId", browseId)
+    }.toString()
+
+    val response = Http.post(
+        "https://music.youtube.com/youtubei/v1/browse?key=${ApiKeyManager.ytMusicKey}&prettyPrint=false",
+        body,
+        headers = playlistHeaders + mapOf("Authorization" to "Bearer $token"),
+    )
+    if (response.code != 200) return emptyList()
+    val root = runCatching { ytApiJson.parseToJsonElement(response.body).jsonObject }.getOrNull()
+        ?: return emptyList()
+
+    val tabs = (root["contents"]?.jsonObject
+        ?.let { it["singleColumnBrowseResultsRenderer"] ?: it["twoColumnBrowseResultsRenderer"] }
+        ?.jsonObject?.get("tabs")?.jsonArray).orEmpty()
+
+    val sections = tabs.flatMap { tab ->
+        (tab.jsonObject["tabRenderer"]?.jsonObject?.get("content")?.jsonObject)
+            ?.let { it["sectionListRenderer"] ?: it }
+            ?.jsonObject?.get("contents")?.jsonArray
+            ?: emptyList()
+    }
+
+    val renderers = sections.flatMap { section ->
+        (section.jsonObject["shelfRenderer"]?.jsonObject?.get("content")?.jsonObject
+            ?.let { it["gridRenderer"] ?: it["musicPlaylistShelfRenderer"] }
+            ?: section.jsonObject["gridRenderer"]
+            ?: section.jsonObject["musicPlaylistShelfRenderer"])
+            ?.jsonObject?.get("items")?.jsonArray ?: emptyList()
+    }
+
+    return renderers.mapNotNull { item ->
+        item.jsonObject["musicTwoRowItemRenderer"]?.jsonObject?.let(::parseLibraryPlaylistItem)
+            ?: item.jsonObject["musicResponsiveListItemRenderer"]?.jsonObject?.let(::parseLibraryPlaylistRow)
+    }
+}
+
+private fun parseLibraryPlaylistItem(item: JsonObject): Playlist? {
+    val id = item.dig(
+        "navigationEndpoint", "watchPlaylistEndpoint", "playlistId",
+    )?.jsonPrimitive?.contentOrNull
+        ?: item.dig("navigationEndpoint", "browseEndpoint", "browseId")
+            ?.jsonPrimitive?.contentOrNull?.removePrefix("VL")
+        ?: return null
+    if (!id.startsWith("PL") && !id.startsWith("OL")) return null
+    val title = item.dig("title", "runs")?.jsonArray?.firstOrNull()
+        ?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull ?: return null
+    val runs = item.dig("subtitle", "runs")?.jsonArray.orEmpty()
+    val thumb = item.dig("thumbnailRenderer", "musicThumbnailRenderer", "thumbnail", "thumbnails")
+        ?.jsonArray?.pickThumbnailUrl() ?: ""
+    return Playlist(id, title, runs.playlistItemCount(), thumb)
+}
+
+private fun parseLibraryPlaylistRow(item: JsonObject): Playlist? {
+    val id = item.dig("navigationEndpoint", "watchPlaylistEndpoint", "playlistId")
+        ?.jsonPrimitive?.contentOrNull
+        ?: item.dig("navigationEndpoint", "browseEndpoint", "browseId")
+            ?.jsonPrimitive?.contentOrNull?.removePrefix("VL")
+        ?: return null
+    if (!id.startsWith("PL") && !id.startsWith("OL")) return null
+    val columns = item["flexColumns"]?.jsonArray.orEmpty().mapNotNull { column ->
+        column.jsonObject["musicResponsiveListItemFlexColumnRenderer"]?.jsonObject
+            ?.dig("text", "runs")?.jsonArray
+    }
+    val title = columns.firstOrNull()?.firstOrNull()
+        ?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull ?: return null
+    val runs = columns.getOrNull(1).orEmpty()
+    val thumb = item.dig("thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails")
+        ?.jsonArray?.pickThumbnailUrl() ?: ""
+    return Playlist(id, title, runs.playlistItemCount(), thumb)
+}
+
+private fun List<JsonElement>.playlistItemCount(): Int =
+    mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+        .firstOrNull { it.contains("song") || it.contains("video") }
+        ?.filter { it.isDigit() }?.toIntOrNull() ?: 0
+
+private fun JsonArray.pickThumbnailUrl(): String? =
+    maxByOrNull { it.jsonObject["width"]?.jsonPrimitive?.intOrNull ?: 0 }
+        ?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
+
+private fun JsonElement.dig(vararg keys: String): JsonElement? =
+    keys.fold(this as JsonElement?) { acc, key -> (acc as? JsonObject)?.get(key) }
 
 private suspend fun fetchPlaylistCoverFromBrowse(playlistId: String): String? = withContext(Dispatchers.IO) {
     val body = buildJsonObject {

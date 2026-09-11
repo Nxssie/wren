@@ -19,6 +19,8 @@ class WrenApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Lets chrome://inspect (or the DevTools protocol over adb) reach the login WebView.
+        if (BuildConfig.DEBUG) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
         AppDirs.init(
             configDir = File(filesDir, "config"),
             stateDir = File(filesDir, "state"),

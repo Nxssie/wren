@@ -32,7 +32,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import models.QueueItem
 import models.RepeatMode
+import player.PlaybackStateStore
 import player.PlayerEngine
+import player.SavedPlayback
+import kotlin.math.abs
 import util.Log
 
 /**
@@ -40,6 +43,8 @@ import util.Log
  * advances the queue itself (resolving each URL lazily through [resolveStreamUrl]), the
  * same shape the desktop FFmpegPlayer uses, so queues with unresolved URLs work.
  */
+private const val PERSIST_EVERY_SEC = 5.0
+
 class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackControls {
 
     /** Shares the resolver's connection pool; logs media requests so 403s can be diagnosed. */
@@ -120,13 +125,25 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     private var consecutiveLoadFailures = 0
     private val maxConsecutiveLoadFailures = 3
 
+    /**
+     * Position to start from the next time the current item is loaded. Set on restore (the
+     * stream is not resolved until the user presses play, so launch costs no network and
+     * makes no sound) and cleared once consumed.
+     */
+    private var resumePositionSec: Double? = null
+    private var lastPersistedPositionSec = 0.0
+    /** True while the current item has been restored but not yet loaded into the player. */
+    private val awaitingResume: Boolean get() = player.mediaItemCount == 0 && current() != null
+
     init {
         player.volume = _volume.value / 100f
         WrenPlaybackService.controls = this
+        restore()
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
                 _isPaused.value = !isPlaying && player.playbackState != Player.STATE_ENDED
+                if (!isPlaying) persist()
                 WrenPlaybackService.update(context)
             }
 
@@ -150,6 +167,8 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
         scope.launch {
             while (isActive) {
+                // Nothing loaded yet after a restore: keep showing the saved position/duration.
+                if (awaitingResume) { delay(500); continue }
                 _position.value = player.currentPosition / 1000.0
                 val total = player.duration
                 if (total > 0) {
@@ -157,6 +176,8 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
                     if (_duration.value == 0.0) WrenPlaybackService.update(context)
                     _duration.value = total / 1000.0
                 }
+                // Checkpoint the position every few seconds so a killed process resumes close by.
+                if (player.isPlaying && abs(_position.value - lastPersistedPositionSec) >= PERSIST_EVERY_SEC) persist()
                 delay(500)
             }
         }
@@ -178,6 +199,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     }
 
     fun release() {
+        persist()
         scope.cancel()
         player.release()
         WrenPlaybackService.controls = null
@@ -196,6 +218,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         _queue.value = ordered
         _queueTitle.value = title?.takeIf { it.isNotBlank() }
         _queueIndex.value = startIndex.coerceIn(0, ordered.lastIndex)
+        resumePositionSec = null
         playIndex(_queueIndex.value)
         WrenPlaybackService.start(context)
     }
@@ -216,10 +239,12 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             _queue.value = listOf(item)
             _queueIndex.value = 0
         }
+        persist()
     }
 
     override fun toggleShuffle() {
         _shuffle.value = !_shuffle.value
+        persist()
         val current = current() ?: return
         val reordered = if (_shuffle.value) _queue.value.shuffled() else restoreOriginalOrder()
         _queue.value = reordered
@@ -242,6 +267,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             RepeatMode.ALL -> RepeatMode.SINGLE
             RepeatMode.SINGLE -> RepeatMode.OFF
         }
+        persist()
     }
 
     override fun next() {
@@ -261,18 +287,26 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         if (player.isPlaying) {
             player.pause()
         } else {
-            if (player.playbackState == Player.STATE_ENDED) {
-                if (_queue.value.isNotEmpty()) playIndex(_queueIndex.value) else return
-            } else {
-                player.play()
+            when {
+                // Restored from disk: the stream is resolved now, from where the user left off.
+                awaitingResume -> playIndex(_queueIndex.value, startAtSec = resumePositionSec ?: 0.0)
+                player.playbackState == Player.STATE_ENDED ->
+                    if (_queue.value.isNotEmpty()) playIndex(_queueIndex.value) else return
+                else -> player.play()
             }
         }
         WrenPlaybackService.update(context)
     }
 
     override fun seek(seconds: Double) {
-        player.seekTo((seconds * 1000).toLong().coerceAtLeast(0))
+        if (awaitingResume) {
+            // Nothing loaded yet: remember where to start instead of seeking an empty player.
+            resumePositionSec = seconds.coerceAtLeast(0.0)
+        } else {
+            player.seekTo((seconds * 1000).toLong().coerceAtLeast(0))
+        }
         _position.value = seconds
+        persist()
     }
 
     override fun setVolume(vol: Int) {
@@ -308,7 +342,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         }
     }
 
-    private fun playIndex(index: Int) {
+    private fun playIndex(index: Int, startAtSec: Double = 0.0) {
         val item = _queue.value.getOrNull(index) ?: return
         _queueIndex.value = index
         _currentTitle.value = item.videoId
@@ -316,8 +350,10 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         WrenPlaybackService.update(context)
         _isEnqueuing.value = true
         _isLoading.value = true
-        _position.value = 0.0
+        _position.value = startAtSec
         _duration.value = 0.0
+        resumePositionSec = null
+        persist()
 
         scope.launch {
             val url = withContext(Dispatchers.IO) { resolveStreamUrl(item.videoId) }
@@ -331,7 +367,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
                 return@launch
             }
             _isEnqueuing.value = false
-            player.setMediaItem(MediaItem.fromUri(url))
+            player.setMediaItem(MediaItem.fromUri(url), (startAtSec * 1000).toLong().coerceAtLeast(0))
             player.prepare()
             player.play()
             consecutiveLoadFailures = 0
@@ -340,6 +376,48 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             WrenPlaybackService.start(context)
             prefetch(index + 1)
         }
+    }
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+
+    /** Puts the last session's queue back, paused, ready to resume from the saved position. */
+    private fun restore() {
+        val saved = PlaybackStateStore.load() ?: return
+        _queue.value = saved.queue
+        _queueIndex.value = saved.index
+        _queueTitle.value = saved.queueTitle
+        _shuffle.value = saved.shuffle
+        _repeatMode.value = saved.repeatMode
+        resumePositionSec = saved.positionSec
+        _position.value = saved.positionSec
+        _duration.value = saved.durationSec
+        val item = saved.queue[saved.index]
+        _currentTitle.value = item.videoId
+        _displayTitle.value = item.title
+        _isPaused.value = true
+        lastPersistedPositionSec = saved.positionSec
+    }
+
+    private fun persist() {
+        val queue = _queue.value
+        val index = _queueIndex.value
+        if (queue.isEmpty() || index !in queue.indices) {
+            PlaybackStateStore.clear()
+            return
+        }
+        val position = if (awaitingResume) resumePositionSec ?: _position.value else _position.value
+        lastPersistedPositionSec = position
+        PlaybackStateStore.save(
+            SavedPlayback(
+                queue = queue,
+                index = index,
+                positionSec = position,
+                durationSec = _duration.value,
+                shuffle = _shuffle.value,
+                repeatMode = _repeatMode.value,
+                queueTitle = _queueTitle.value,
+            ),
+        )
     }
 
     private fun prefetch(index: Int) {

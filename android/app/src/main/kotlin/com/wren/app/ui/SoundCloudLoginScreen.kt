@@ -3,6 +3,7 @@ package com.wren.app.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Message
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -155,7 +156,13 @@ private fun SoundCloudWebView(
     val cancel by rememberUpdatedState(onCancel)
     val popups = remember { mutableStateListOf<WebView>() }
     val holder = remember(request) {
-        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().apply {
+            // DataDome pins its verdict to a cookie, so a challenge from a previous attempt
+            // would follow every retry. Nothing else in the app needs WebView cookies.
+            removeAllCookies(null)
+            flush()
+            setAcceptCookie(true)
+        }
         WebLoginWebViews(context, request, { url -> callback(url) }, popups)
     }
 
@@ -193,14 +200,23 @@ private class WebLoginWebViews(
     }
 
     private fun create(): WebView = WebView(context).apply {
+        // Without explicit match-parent params the WebView measures like wrap_content and
+        // resolves `100vh` to 0px, which collapses DataDome's captcha overlay to nothing:
+        // the challenge runs invisibly and SoundCloud only shows "Something unexpected".
+        layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        )
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
-        // Same UA as desktop's SoundCloudLoginWindow: Google blocks anything that
-        // advertises itself as an embedded WebView, and the mobile-Chrome UA routes
-        // SoundCloud's web-auth to a phone flow whose sign-in breaks mid-submit.
-        settings.userAgentString = DESKTOP_UA
+        // SoundCloud's auth sits behind DataDome, whose device check compares the UA with
+        // the real engine and device: the desktop Safari UA that fits desktop's WebKit view
+        // fails here on Chromium plus touch screen and the email step dies with a generic
+        // error. Keep the true mobile Chrome UA and only drop the "wv" marker that flags an
+        // embedded WebView, which Google's popup refuses.
+        settings.userAgentString = browserUserAgent(settings.userAgentString)
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
         webViewClient = object : WebViewClient() {
@@ -258,7 +274,7 @@ private class WebLoginWebViews(
     }
 
     private companion object {
-        const val DESKTOP_UA =
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+        fun browserUserAgent(defaultUa: String): String =
+            defaultUa.replace("; wv", "").replace(Regex("""\s*Version/\d+(\.\d+)*"""), "")
     }
 }
