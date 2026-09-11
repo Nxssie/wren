@@ -25,6 +25,9 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
 import auth.AuthEvents
+import util.ThemePreference
 import player.PlayerEngine
 import provider.Platform
 import provider.Providers
@@ -51,27 +55,48 @@ private enum class WrenTab(val code: String, val icon: ImageVector) {
     val browsesPlatform: Boolean get() = this != NOW_PLAYING
 }
 
+/**
+ * @param openNowPlaying requested by a tap on the media widget; consumed here and cleared, so
+ *   a later tap raises it again (see MainActivity).
+ */
 @Composable
-fun WrenApp(engine: PlayerEngine) {
-    var tab by remember { mutableStateOf(WrenTab.SEARCH) }
+fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
+    // Saved, not just remembered: a system-initiated recreate (dark mode, locale, font scale)
+    // or a restore after process death used to drop the user back on Search.
+    var tab by rememberSaveable { mutableStateOf(WrenTab.SEARCH) }
     // Tabs visited so far, so the system back gesture retraces steps instead of quitting.
-    val tabHistory = remember { mutableStateListOf<WrenTab>() }
+    val tabHistory = rememberSaveable(saver = TabHistorySaver) { mutableStateListOf<WrenTab>() }
     fun navigate(target: WrenTab) {
         if (target == tab) return
         tabHistory.remove(target)
         tabHistory.add(tab)
         tab = target
     }
-    var platform by remember { mutableStateOf(Platform.YOUTUBE) }
+    var platform by rememberSaveable { mutableStateOf(Platform.YOUTUBE) }
     var showAccounts by remember { mutableStateOf(false) }
     var showSoundcloudLogin by remember { mutableStateOf(false) }
     // Set when an artist is tapped in the Library; SearchScreen picks it up and searches.
     var artistSearchName by remember { mutableStateOf<String?>(null) }
+    // Set by a tap on the player bar while already on Now Playing, where there is no tab to
+    // switch to: the queue sheet is the thing that tap should open.
+    val showQueue = remember { mutableStateOf(false) }
     val authVersion by AuthEvents.version.collectAsState()
     val provider = remember(platform) { Providers.of(platform) }
 
     // Likes follow the SoundCloud session: load on start, reload/clear on sign in/out.
     LaunchedEffect(authVersion) { SoundCloudLikes.refresh() }
+
+    // A tap on the widget means "show me what is playing". At a cold start there is nothing to
+    // go back to, so it becomes the entry tab; otherwise it is pushed, so back returns to
+    // whatever the user was doing. The overlays sit above the tabs, so they have to close
+    // first or the request would land behind whichever one was open.
+    LaunchedEffect(openNowPlaying.value) {
+        if (!openNowPlaying.value) return@LaunchedEffect
+        showAccounts = false
+        showSoundcloudLogin = false
+        if (tabHistory.isEmpty()) tab = WrenTab.NOW_PLAYING else navigate(WrenTab.NOW_PLAYING)
+        openNowPlaying.value = false
+    }
 
     // Outermost back handler: screens register their own (collapse sheet, leave playlist,
     // close login) and win while enabled; this one only runs once those are exhausted.
@@ -90,7 +115,9 @@ fun WrenApp(engine: PlayerEngine) {
             },
             bottomBar = {
                 Column {
-                    PlayerBar(engine) { navigate(WrenTab.NOW_PLAYING) }
+                    PlayerBar(engine) {
+                        if (tab == WrenTab.NOW_PLAYING) showQueue.value = true else navigate(WrenTab.NOW_PLAYING)
+                    }
                     BottomNav(
                         selected = tab,
                         discoverLabel = provider.discoverLabel,
@@ -118,7 +145,7 @@ fun WrenApp(engine: PlayerEngine) {
                             onArtistSearch = { artistSearchName = it; navigate(WrenTab.SEARCH) },
                         )
                     }
-                    WrenTab.NOW_PLAYING -> NowPlayingScreen(engine)
+                    WrenTab.NOW_PLAYING -> NowPlayingScreen(engine, showQueue)
                 }
             }
         }
@@ -133,8 +160,9 @@ fun WrenApp(engine: PlayerEngine) {
             )
         }
 
+        // No back handler here: SoundCloudLoginScreen's own (composed last, so it wins) walks
+        // the WebView back first and only then cancels — to the same place this would go.
         if (showSoundcloudLogin) {
-            BackHandler { showSoundcloudLogin = false; showAccounts = true }
             Box(Modifier.fillMaxSize().background(Background)) {
                 SoundCloudLoginScreen(
                     onDone = {
@@ -193,12 +221,24 @@ private fun AppHeader(
     }
 }
 
+/**
+ * The back stack is a handful of enum entries; the saver is what carries it across a
+ * recreate, where `remember` would have started the user over on Search.
+ */
+private val TabHistorySaver = listSaver<SnapshotStateList<WrenTab>, WrenTab>(
+    save = { it.toList() },
+    restore = { it.toMutableStateList() },
+)
+
 /** Same `_theme; dark;` control as the desktop sidebar. */
 @Composable
 private fun ThemeToggle() {
     Row(
         Modifier
-            .clickable { globalDark = !globalDark }
+            .clickable {
+                globalDark = !globalDark
+                ThemePreference.save(globalDark)
+            }
             .padding(horizontal = 10.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),

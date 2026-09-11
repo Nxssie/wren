@@ -85,13 +85,28 @@ class WrenPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (controls == null) {
+            // A sticky restart after the process died has no player to control, and entering the
+            // foreground for an empty player is exactly what the platform forbids.
+            stopSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_TOGGLE -> controls?.onToggle()
             ACTION_NEXT -> controls?.onNext()
             ACTION_PREVIOUS -> controls?.onPrevious()
+            ACTION_DISMISS -> {
+                // Only reachable while paused: a playing notification is ongoing and cannot be
+                // swiped. A foreground service with no notification is both unstoppable by the
+                // user and a policy violation, so leaving is the whole job here.
+                if (controls?.notificationPlaying != true) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+                return START_NOT_STICKY
+            }
         }
         publish(foreground = true)
-        if (controls == null) stopSelf()
         return START_STICKY
     }
 
@@ -155,6 +170,9 @@ class WrenPlaybackService : Service() {
             .setContentText(controls?.notificationSubtitle.orEmpty())
             .setLargeIcon(artworkBitmap(controls?.notificationArtwork))
             .setContentIntent(contentPendingIntent())
+            // Swiping a paused notification away has to mean "stop showing me this": the
+            // service stops with it (see ACTION_DISMISS).
+            .setDeleteIntent(actionPendingIntent(ACTION_DISMISS))
             .setOnlyAlertOnce(true)
             .setOngoing(playing)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -190,10 +208,11 @@ class WrenPlaybackService : Service() {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
+    /** The widget's body and the session card both land on Now Playing, not on the home tab. */
     private fun contentPendingIntent(): PendingIntent = PendingIntent.getActivity(
         this,
         0,
-        Intent(this, MainActivity::class.java),
+        Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_NOW_PLAYING),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -260,6 +279,7 @@ class WrenPlaybackService : Service() {
         private const val ACTION_START = "com.wren.app.START"
         private const val ACTION_UPDATE = "com.wren.app.UPDATE"
         private const val ACTION_TOGGLE = "com.wren.app.TOGGLE"
+        private const val ACTION_DISMISS = "com.wren.app.DISMISS"
         private const val ACTION_NEXT = "com.wren.app.NEXT"
         private const val ACTION_PREVIOUS = "com.wren.app.PREVIOUS"
         private const val SUPPORTED_ACTIONS = PlaybackStateCompat.ACTION_PLAY or

@@ -38,6 +38,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import util.ThemePreference
 import player.FFmpegPlayer
 import provider.Platform
 import provider.Providers
@@ -281,7 +282,10 @@ private fun Sidebar(
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable { globalDark = !globalDark }
+                .clickable {
+                    globalDark = !globalDark
+                    ThemePreference.save(globalDark)
+                }
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween

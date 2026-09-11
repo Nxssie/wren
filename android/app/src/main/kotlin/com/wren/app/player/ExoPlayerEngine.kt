@@ -12,7 +12,10 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import util.Http
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import api.ListeningHistory
 import api.resolveStreamUrl
 import api.warmupStreamConnection
@@ -32,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import models.QueueItem
 import models.RepeatMode
+import player.LoudnessStore
 import player.PlaybackStateStore
 import player.PlayerEngine
 import player.SavedPlayback
@@ -65,10 +69,32 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    /**
+     * Normalises each track to a common level (see Loudness) and measures it while it plays.
+     * Getting a processor into the chain means building the audio sink by hand: ExoPlayer offers
+     * no other hook for post-processing the decoded PCM.
+     */
+    private val loudnessProcessor = LoudnessAudioProcessor { videoId, measurement ->
+        scope.launch { withContext(Dispatchers.IO) { LoudnessStore.record(videoId, measurement) } }
+    }
+
+    private val renderersFactory = object : DefaultRenderersFactory(context) {
+        override fun buildAudioSink(
+            context: Context,
+            enableFloatOutput: Boolean,
+            enableAudioTrackPlaybackParams: Boolean,
+        ): AudioSink = DefaultAudioSink.Builder(context)
+            .setAudioProcessorChain(DefaultAudioSink.DefaultAudioProcessorChain(loudnessProcessor))
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .build()
+    }
+
     // Same OkHttp client that resolved the URL, and the user agent of the InnerTube client
     // that issued it: googlevideo 403s when the media request does not look like the
     // client that asked for the URL, which is how "nothing plays" with no visible error.
     private val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setRenderersFactory(renderersFactory)
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(
                 DataSource.Factory {
@@ -137,6 +163,8 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     init {
         player.volume = _volume.value / 100f
+        // Read the stored levels up front: the audio thread only ever looks them up in memory.
+        LoudnessStore.warmUp()
         WrenPlaybackService.controls = this
         restore()
         player.addListener(object : Player.Listener {
@@ -190,6 +218,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     }
 
     override fun stop() {
+        persistLoudness()
         player.stop()
         player.clearMediaItems()
         _isPlaying.value = false
@@ -200,6 +229,11 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     fun release() {
         persist()
+        // Straight to disk: releasing the player resets the sink (dropping the meter), and the
+        // scope is cancelled below, so a dispatched write would never land.
+        loudnessProcessor.currentMeasurement()?.let { (videoId, measurement) ->
+            LoudnessStore.record(videoId, measurement)
+        }
         scope.cancel()
         player.release()
         WrenPlaybackService.controls = null
@@ -214,10 +248,19 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     override fun loadQueue(items: List<QueueItem>, startIndex: Int, title: String?) {
         if (items.isEmpty()) return
-        val ordered = if (_shuffle.value && items.size > 1) items.shuffled() else items
+        val start = startIndex.coerceIn(0, items.lastIndex)
+        val selected = items[start]
+        // The tapped track is absolute: shuffle only the tracks around it.
+        val ordered = if (_shuffle.value && items.size > 1) {
+            val rest = items.filterIndexed { index, _ -> index != start }.shuffled().toMutableList()
+            rest.add(start, selected)
+            rest
+        } else {
+            items
+        }
         _queue.value = ordered
         _queueTitle.value = title?.takeIf { it.isNotBlank() }
-        _queueIndex.value = startIndex.coerceIn(0, ordered.lastIndex)
+        _queueIndex.value = start
         resumePositionSec = null
         playIndex(_queueIndex.value)
         WrenPlaybackService.start(context)
@@ -345,6 +388,8 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     private fun playIndex(index: Int, startAtSec: Double = 0.0) {
         val item = _queue.value.getOrNull(index) ?: return
         _queueIndex.value = index
+        // Files the level of whatever was playing under its own id before the next track starts.
+        loudnessProcessor.beginTrack(item.videoId)
         _currentTitle.value = item.videoId
         _displayTitle.value = item.title
         WrenPlaybackService.update(context)
@@ -423,6 +468,12 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     private fun prefetch(index: Int) {
         val item = _queue.value.getOrNull(index) ?: return
         scope.launch { withContext(Dispatchers.IO) { resolveStreamUrl(item.videoId) } }
+    }
+
+    /** Keeps however much of the current track has been measured so far, for the next play. */
+    private fun persistLoudness() {
+        val (videoId, measurement) = loudnessProcessor.currentMeasurement() ?: return
+        scope.launch { withContext(Dispatchers.IO) { LoudnessStore.record(videoId, measurement) } }
     }
 
     // ── Notification contract ────────────────────────────────────────────────

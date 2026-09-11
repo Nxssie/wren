@@ -5,6 +5,7 @@ import androidx.compose.ui.window.application
 import ui.AppWindow
 import util.AppDirs
 import util.Log
+import util.ThemePreference
 import java.io.File
 
 fun main() {
@@ -12,6 +13,8 @@ fun main() {
         configDir = File(System.getProperty("user.home"), ".config/wren"),
         stateDir = File(System.getProperty("user.home"), ".local/state/wren"),
     )
+    // Before the first window exists, so the choice applies to the first frame (no flash).
+    ThemePreference.load()?.let { ui.globalDark = it }
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         Log.e("Uncaught", "Uncaught exception on thread '${thread.name}'", throwable)
     }

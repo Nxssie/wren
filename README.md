@@ -142,6 +142,48 @@ queue, discover and lyrics.
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release builds are signed locally — no CI involved. Create the keystore once and keep it safe:
+it is the only thing that can update an installed app in place.
+
+```bash
+keytool -genkeypair -v -keystore ~/.android/keys/wren-release.jks -storetype PKCS12 \
+  -alias wren -keyalg RSA -keysize 4096 -validity 10000 \
+  -storepass "$WREN_RELEASE_KEYSTORE_PASSWORD" -keypass "$WREN_RELEASE_KEYSTORE_PASSWORD" -dname "CN=wren"
+```
+
+Then build it. Credentials come from the environment, never from the repo (`AGENTS.md` has the
+secrets convention), and the signing config is skipped — producing an unsigned APK — when they
+are unset:
+
+```bash
+mise run android:apk          # or: ./gradlew :android:app:assembleRelease
+adb install -r android/app/build/outputs/apk/release/wren-*.apk
+```
+
+Variables: `WREN_RELEASE_KEYSTORE_PATH`, `WREN_RELEASE_KEYSTORE_PASSWORD`,
+`WREN_RELEASE_KEY_ALIAS`, `WREN_RELEASE_KEY_PASSWORD`. PKCS12 uses one password for the store
+and the key, so the two password variables hold the same value. Signing with a different key
+than an installed build already uses needs an uninstall first.
+
+`versionCode` counts commits and `versionName` is the `git describe` string, so a build
+already installed on a phone can be replaced without uninstalling. Both accept an override in
+`WREN_VERSION_CODE` / `WREN_VERSION_NAME` (what a tagged release would use). The APK is named
+from the same string — `wren-0.4.0.apk`, or `wren-<version>-unsigned.apk` when the signing
+variables above are missing.
+
+Publishing is manual by design — the APK reaches a release page when you decide it does, never
+as a side effect of pushing:
+
+```bash
+git tag v0.5.0 && git push origin v0.5.0
+mise run android:release        # builds, checks the signature, uploads to release v0.5.0
+```
+
+The task refuses to run on a dirty tree or an untagged commit (the APK name comes from git, so
+there would be nothing to trace it to), verifies the APK is signed by `CN=wren` before
+uploading, and adds the asset to the release the tag already has — the desktop artifacts and
+the APK end up on the same page.
+
 Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
 and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).
 

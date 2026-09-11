@@ -114,6 +114,38 @@ internal suspend fun scGetJsonElement(path: String): JsonElement? {
 
 private data class JsonResp(val status: Int, val body: JsonElement)
 
+/** SoundCloud clamps a page well below this; the cursor from `next_href` is what advances. */
+private const val SC_PAGE_SIZE = 200
+/** Bounds a runaway cursor: 50 pages is far past any real library. */
+private const val SC_MAX_PAGES = 50
+
+/**
+ * Walks an api-v2 collection to its end through `next_href`, so a library list is not just its
+ * first page — the default page size is what silently truncated likes, playlists and the like.
+ *
+ * A page that fails partway keeps what was already collected rather than failing the call: the
+ * alternative is showing nothing at all, and every item is independent.
+ */
+internal suspend fun <T> scCollection(path: String, parse: (JsonObject) -> T?): List<T> {
+    val items = mutableListOf<T>()
+    var next: String? = "$path?limit=$SC_PAGE_SIZE"
+    var pages = 0
+    while (next != null) {
+        if (pages++ >= SC_MAX_PAGES) {
+            Log.w("SoundCloud", "stopped listing $path after $SC_MAX_PAGES pages")
+            break
+        }
+        val root = scGetJson(next)
+        if (root == null) {
+            Log.w("SoundCloud", "listing $path stopped early, page $pages of it failed")
+            break
+        }
+        root["collection"]?.jsonArray?.forEach { item -> parse(item.jsonObject)?.let(items::add) }
+        next = root["next_href"]?.jsonPrimitive?.contentOrNull?.removePrefix(SC_BASE)
+    }
+    return items
+}
+
 private fun httpGetJson(url: String, token: String? = null): JsonResp? = runCatching {
     val headers = buildMap {
         put("User-Agent", SC_USER_AGENT)
@@ -213,42 +245,40 @@ object SoundCloud {
 
     // ── Library ──────────────────────────────────────────────────────────────
 
-    suspend fun userLikes(userId: Long, limit: Int = 50): List<SearchResult> = withContext(Dispatchers.IO) {
-        val root = scGetJson("/users/$userId/track_likes?limit=$limit") ?: return@withContext emptyList()
-        root["collection"]?.jsonArray?.mapNotNull { item ->
-            item.jsonObject["track"]?.jsonObject?.let { parseScTrack(it) }
-        } ?: emptyList()
+    suspend fun userLikes(userId: Long): List<SearchResult> = withContext(Dispatchers.IO) {
+        scCollection("/users/$userId/track_likes") { item ->
+            item["track"]?.jsonObject?.let(::parseScTrack)
+        }
     }
 
-    suspend fun userPlaylists(userId: Long, limit: Int = 50): List<Playlist> = withContext(Dispatchers.IO) {
-        val root = scGetJson("/users/$userId/playlists_without_albums?limit=$limit") ?: return@withContext emptyList()
-        root["collection"]?.jsonArray?.mapNotNull { parseCollection(it.jsonObject) }?.map {
-            Playlist(id = it.id, title = it.title, itemCount = it.trackCount, thumbnailUrl = it.artworkUrl ?: "")
-        } ?: emptyList()
+    suspend fun userPlaylists(userId: Long): List<Playlist> = withContext(Dispatchers.IO) {
+        scCollection("/users/$userId/playlists_without_albums") { item ->
+            parseCollection(item)?.let {
+                Playlist(id = it.id, title = it.title, itemCount = it.trackCount, thumbnailUrl = it.artworkUrl ?: "")
+            }
+        }
     }
 
     /**
      * Playlists from other users that [userId] saved (liked). The response nests the full
      * playlist under `playlist`, unlike [userPlaylists] which returns them directly.
      */
-    suspend fun userSavedPlaylists(userId: Long, limit: Int = 50): List<Playlist> = withContext(Dispatchers.IO) {
-        val root = scGetJson("/users/$userId/playlist_likes?limit=$limit") ?: return@withContext emptyList()
-        root["collection"]?.jsonArray
-            ?.mapNotNull { item ->
-                val obj = item.jsonObject["playlist"]?.jsonObject ?: item.jsonObject
-                val collection = parseCollection(obj) ?: return@mapNotNull null
-                val owner = obj["user"]?.jsonObject?.get("username")?.jsonPrimitive?.contentOrNull
-                collection to owner
-            }
-            ?.distinctBy { it.first.id }
-            ?.map { (collection, owner) ->
+    suspend fun userSavedPlaylists(userId: Long): List<Playlist> = withContext(Dispatchers.IO) {
+        scCollection("/users/$userId/playlist_likes") { item ->
+            val obj = item["playlist"]?.jsonObject ?: item
+            val collection = parseCollection(obj) ?: return@scCollection null
+            val owner = obj["user"]?.jsonObject?.get("username")?.jsonPrimitive?.contentOrNull
+            collection to owner
+        }
+            .distinctBy { it.first.id }
+            .map { (collection, owner) ->
                 Playlist(
                     id = collection.id,
                     title = if (owner != null) "${collection.title} · by $owner" else collection.title,
                     itemCount = collection.trackCount,
-                    thumbnailUrl = collection.artworkUrl ?: ""
+                    thumbnailUrl = collection.artworkUrl ?: "",
                 )
-            } ?: emptyList()
+            }
     }
 
     /**
@@ -256,20 +286,12 @@ object SoundCloud {
      * (the UI keys likes by permalink because that is what QueueItem carries).
      */
     suspend fun userLikeIds(userId: Long): Map<String, Long> = withContext(Dispatchers.IO) {
-        val out = LinkedHashMap<String, Long>()
-        var path: String? = "/users/$userId/track_likes?limit=200"
-        var pages = 0
-        while (path != null && pages++ < 25) {
-            val root = scGetJson(path) ?: break
-            root["collection"]?.jsonArray?.forEach { item ->
-                val track = item.jsonObject["track"]?.jsonObject ?: return@forEach
-                val id = track["id"]?.jsonPrimitive?.longOrNull ?: return@forEach
-                val permalink = track["permalink_url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                out[permalink] = id
-            }
-            path = root["next_href"]?.jsonPrimitive?.contentOrNull?.removePrefix(SC_BASE)
-        }
-        out
+        scCollection("/users/$userId/track_likes") { item ->
+            val track = item["track"]?.jsonObject ?: return@scCollection null
+            val id = track["id"]?.jsonPrimitive?.longOrNull ?: return@scCollection null
+            val permalink = track["permalink_url"]?.jsonPrimitive?.contentOrNull ?: return@scCollection null
+            permalink to id
+        }.toMap()
     }
 
     /** Numeric id behind a track permalink, for items that only carry the URL. */
