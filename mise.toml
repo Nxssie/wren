@@ -16,6 +16,10 @@ run = "./gradlew :android:app:assembleDebug"
 description = "Upload the signed APK of the current tag to its GitHub release (manual, never CI)"
 run = "./scripts/publish-android-release.sh"
 
+[tasks."desktop:release"]
+description = "Attach the CI-built desktop packages of a tag to its GitHub release (manual)"
+run = "./scripts/attach-desktop-release.sh"
+
 [tasks."android:install"]
 description = "Install the release APK on the connected device"
 depends = ["android:apk"]
