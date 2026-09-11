@@ -27,6 +27,7 @@ import provider.MusicProvider
 import kotlinx.coroutines.launch
 import player.FFmpegPlayer
 import models.toQueueItem
+import util.connectMessage
 
 private enum class LibraryTab(val code: String, val label: String) {
     SONGS("SNG", "songs"),
@@ -54,6 +55,13 @@ fun LibraryScreen(
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
     var tracks by remember { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
+    // A fetch that failed leaves its list null and shows this instead: an empty list is a fact
+    // the user cannot tell apart from a request that never arrived.
+    var songsError by remember { mutableStateOf<String?>(null) }
+    var playlistsError by remember { mutableStateOf<String?>(null) }
+    var artistsError by remember { mutableStateOf<String?>(null) }
+    var tracksError by remember { mutableStateOf<String?>(null) }
+    var retry by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     if (!provider.supportsLibrary) {
@@ -69,22 +77,39 @@ fun LibraryScreen(
         return
     }
 
-    LaunchedEffect(tab) {
+    LaunchedEffect(tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            songs = runCatching { provider.librarySongs() }.getOrDefault(emptyList())
+            val result = runCatching { provider.librarySongs() }
+            songs = result.getOrNull()
+            songsError = result.exceptionOrNull()?.connectMessage()
             loading = false
             songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
-            playlists = runCatching { provider.playlists() }.getOrDefault(emptyList())
+            val result = runCatching { provider.playlists() }
+            playlists = result.getOrNull()
+            playlistsError = result.exceptionOrNull()?.connectMessage()
             loading = false
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            artists = runCatching { provider.libraryArtists() }.getOrDefault(emptyList())
+            val result = runCatching { provider.libraryArtists() }
+            artists = result.getOrNull()
+            artistsError = result.exceptionOrNull()?.connectMessage()
             loading = false
+        }
+    }
+
+    fun loadPlaylistTracks(playlist: Playlist) {
+        scope.launch {
+            loading = true
+            val result = runCatching { provider.playlistTracks(playlist.id) }
+            tracks = result.getOrNull().orEmpty()
+            tracksError = result.exceptionOrNull()?.connectMessage()
+            loading = false
+            tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
         }
     }
 
@@ -111,7 +136,9 @@ fun LibraryScreen(
                 Spacer(Modifier.width(4.dp))
                 Text(openPlaylist.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
-            if (loading) {
+            if (tracksError != null) {
+                LibraryError(tracksError!!) { loadPlaylistTracks(openPlaylist) }
+            } else if (loading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = PsInk900)
                 }
@@ -125,18 +152,34 @@ fun LibraryScreen(
 
         LibraryTabs(tabs, tab) { tab = it }
 
-        when (tab) {
+        val error = when (tab) {
+            LibraryTab.SONGS -> songsError
+            LibraryTab.PLAYLISTS -> playlistsError
+            LibraryTab.ARTISTS -> artistsError
+        }
+        if (error != null) {
+            LibraryError(error) { retry++ }
+        } else when (tab) {
             LibraryTab.SONGS -> TrackList(songs, loading, player, "// no_liked_songs;")
             LibraryTab.PLAYLISTS -> PlaylistList(playlists, loading) { playlist ->
                 selectedPlaylist = playlist
-                scope.launch {
-                    loading = true
-                    tracks = runCatching { provider.playlistTracks(playlist.id) }.getOrDefault(emptyList())
-                    loading = false
-                    tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
-                }
+                loadPlaylistTracks(playlist)
             }
             LibraryTab.ARTISTS -> ArtistList(artists, loading, onArtistClick)
+        }
+    }
+}
+
+/** A failed fetch, with the way out: the list stays null, so retrying is the only exit. */
+@Composable
+private fun LibraryError(message: String, onRetry: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(message, color = PsSignalDanger, fontSize = 12.sp, fontFamily = FontMono)
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = onRetry) {
+                Text("retry;", color = TextPrimary, fontSize = 12.sp, fontFamily = FontMono)
+            }
         }
     }
 }
