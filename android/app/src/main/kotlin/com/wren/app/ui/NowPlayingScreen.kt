@@ -127,10 +127,11 @@ fun NowPlayingScreen(engine: PlayerEngine) {
 
     val item = queue.getOrNull(index)
     val artworkUrl = artworkFor(item)
-    // Only SoundCloud tracks can be saved (YouTube streams are not ours to keep).
-    val download: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD }?.let { track ->
-        { DownloadManager.enqueue(track, downloadsDestination(context)) }
-    }
+    // Only SoundCloud tracks can be saved, and only when saving has been turned on: the request
+    // is anonymous, but a client fetching whole files is what gets a client id rotated.
+    val download: (() -> Unit)? = item
+        ?.takeIf { it.source == Source.SOUNDCLOUD && allowSoundCloudDownloads }
+        ?.let { track -> { DownloadManager.enqueue(track, downloadsDestination(context)) } }
     val like: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD && SoundCloudAuth.isAuthenticated }?.let { track ->
         { scope.launch { SoundCloudLikes.toggle(track.url) } }
     }
