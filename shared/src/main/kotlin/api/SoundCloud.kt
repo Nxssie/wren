@@ -116,8 +116,6 @@ private data class JsonResp(val status: Int, val body: JsonElement)
 
 /** SoundCloud clamps a page well below this; the cursor from `next_href` is what advances. */
 private const val SC_PAGE_SIZE = 200
-/** Bounds a runaway cursor: 50 pages is far past any real library. */
-private const val SC_MAX_PAGES = 50
 
 /**
  * Walks an api-v2 collection to its end through `next_href`, so a library list is not just its
@@ -126,25 +124,25 @@ private const val SC_MAX_PAGES = 50
  * A page that fails partway keeps what was already collected rather than failing the call: the
  * alternative is showing nothing at all, and every item is independent.
  */
-internal suspend fun <T> scCollection(path: String, parse: (JsonObject) -> T?): List<T> {
-    val items = mutableListOf<T>()
-    var next: String? = "$path?limit=$SC_PAGE_SIZE"
-    var pages = 0
-    while (next != null) {
-        if (pages++ >= SC_MAX_PAGES) {
-            Log.w("SoundCloud", "stopped listing $path after $SC_MAX_PAGES pages")
-            break
-        }
-        val root = scGetJson(next)
-        if (root == null) {
-            Log.w("SoundCloud", "listing $path stopped early, page $pages of it failed")
-            break
-        }
-        root["collection"]?.jsonArray?.forEach { item -> parse(item.jsonObject)?.let(items::add) }
-        next = root["next_href"]?.jsonPrimitive?.contentOrNull?.removePrefix(SC_BASE)
-    }
-    return items
+/**
+ * One page of an api-v2 collection. The cursor is the `next_href` the API hands back, passed
+ * through unread: it is an opaque token, not an offset anyone should compute.
+ */
+internal suspend fun <T> scCollectionPage(
+    path: String,
+    cursor: String?,
+    parse: (JsonObject) -> T?,
+): Page<T> {
+    val root = scGetJson(cursor ?: "$path?limit=$SC_PAGE_SIZE")
+        ?: throw IllegalStateException("soundcloud: $path page failed")
+    return Page(
+        root["collection"]?.jsonArray.orEmpty().mapNotNull { parse(it.jsonObject) },
+        root["next_href"]?.jsonPrimitive?.contentOrNull?.removePrefix(SC_BASE),
+    )
 }
+
+internal suspend fun <T> scCollection(path: String, parse: (JsonObject) -> T?): List<T> =
+    allPages("SoundCloud") { scCollectionPage(path, it, parse) }
 
 private fun httpGetJson(url: String, token: String? = null): JsonResp? = runCatching {
     val headers = buildMap {
@@ -245,8 +243,12 @@ object SoundCloud {
 
     // ── Library ──────────────────────────────────────────────────────────────
 
-    suspend fun userLikes(userId: Long): List<SearchResult> = withContext(Dispatchers.IO) {
-        scCollection("/users/$userId/track_likes") { item ->
+    suspend fun userLikes(userId: Long): List<SearchResult> =
+        allPages("SoundCloud") { userLikesPage(userId, it) }
+
+    /** One page of likes, for the screens that fill as it arrives. */
+    suspend fun userLikesPage(userId: Long, cursor: String? = null): Page<SearchResult> = withContext(Dispatchers.IO) {
+        scCollectionPage("/users/$userId/track_likes", cursor) { item ->
             item["track"]?.jsonObject?.let(::parseScTrack)
         }
     }
