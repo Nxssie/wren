@@ -3,7 +3,6 @@ package ui
 import auth.AuthEvents
 import auth.GoogleAuth
 import auth.SoundCloudAuth
-import auth.SoundCloudOAuth
 import auth.loadCredentials
 import auth.runGoogleLogin
 import util.connectMessage
@@ -148,11 +147,10 @@ fun ProfileDialog(onDismiss: () -> Unit) {
                     scError = null
                     scope.launch {
                         try {
-                            // Native PKCE flow: only the auth page runs in the WebView,
-                            // the code exchange happens in SoundCloudOAuth.
-                            val request = SoundCloudOAuth.buildAuthRequest(api.scClientId())
-                            val code = SoundCloudLoginWindow.open(request).await()
-                            SoundCloudAuth.connect(SoundCloudOAuth.exchangeCode(code, request))
+                            // The ordinary sign-in page, not the authorization endpoint: the app
+                            // reads the token the page keeps for itself and validates it as usual.
+                            val token = SoundCloudLoginWindow.open().await()
+                            SoundCloudAuth.connect(token)
                             scTokenInput = ""
                         } catch (e: Exception) {
                             scError = e.connectMessage()
@@ -183,7 +181,7 @@ fun ProfileDialog(onDismiss: () -> Unit) {
                                 if (scConnecting && scTokenInput.isBlank()) {
                                     CircularProgressIndicator(modifier = Modifier.size(14.dp), color = PsWhite, strokeWidth = 1.5.dp)
                                 } else {
-                                    Text("sign_in_with_browser;", color = PsWhite, fontFamily = FontMono, fontSize = 12.sp)
+                                    Text("sign_in_to_soundcloud;", color = PsWhite, fontFamily = FontMono, fontSize = 12.sp)
                                 }
                             }
                             Spacer(Modifier.height(10.dp))

@@ -149,7 +149,7 @@ fun AccountsDialog(
                             shape = RoundedCornerShape(0.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("sign_in_with_browser;", color = Background, fontFamily = FontMono, fontSize = 12.sp)
+                            Text("sign_in_to_soundcloud;", color = Background, fontFamily = FontMono, fontSize = 12.sp)
                         }
                         Spacer(Modifier.height(10.dp))
                         Text("// or_paste_token_manually;", color = PsSteel400, fontFamily = FontMono, fontSize = 10.sp)
