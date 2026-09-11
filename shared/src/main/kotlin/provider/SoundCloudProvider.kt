@@ -87,10 +87,14 @@ private const val TAG = "SoundCloud"
             .onFailure { Log.w(TAG, "mixed-selections failed", it) }
             .getOrDefault(emptyList())
             .filter(keep)
+            .distinctBy { it.urn }
             .map { sel ->
                 Shelf(
                     title = sel.title.lowercase(),
-                    cards = sel.items.take(12).map { ShelfCard(it.id, it.title, it.subtitle, it.artworkUrl) }
+                    // A selection can list the same system playlist twice; showing the card twice
+                    // tells the user nothing and used to repeat a lazy-list key.
+                    cards = sel.items.distinctBy { it.id }.take(12)
+                        .map { ShelfCard(it.id, it.title, it.subtitle, it.artworkUrl) }
                 )
             }
 

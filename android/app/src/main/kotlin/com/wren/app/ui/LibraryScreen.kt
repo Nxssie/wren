@@ -3,7 +3,6 @@ package com.wren.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
@@ -276,7 +275,9 @@ private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playl
         }
         list.isEmpty() -> LibraryNotice("no playlists found")
         else -> LazyColumn(Modifier.fillMaxSize()) {
-            items(list, key = { it.id }) { playlist ->
+            // Keyed by position as well as id: a provider that repeats an item is not a reason
+            // for the list to throw at measure time.
+            itemsIndexed(list, key = { index, playlist -> "playlist:$index:${playlist.id}" }) { _, playlist ->
                 TrackRow(
                     title = playlist.title,
                     subtitle = playlist.owner?.let { "${playlist.itemCount} songs · $it" }
@@ -301,7 +302,7 @@ private fun ArtistList(
         }
         list.isEmpty() -> LibraryNotice("no followed artists")
         else -> LazyColumn(Modifier.fillMaxSize()) {
-            items(list, key = { it.browseId }) { artist ->
+            itemsIndexed(list, key = { index, artist -> "artist:$index:${artist.browseId}" }) { _, artist ->
                 TrackRow(
                     title = artist.name,
                     subtitle = artist.subtitle,
