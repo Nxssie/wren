@@ -16,6 +16,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.wren.app.ui.WrenApp
 
+/**
+ * Deliberately owns no teardown: the engine lives in [WrenApplication] and the playback
+ * service is a foreground service, so finishing this activity (back, or the task going away)
+ * must leave playback and its notification running. Releasing here is what used to silence
+ * the app the moment the user left it.
+ */
 class MainActivity : ComponentActivity() {
 
     /** Raised by a tap on the media widget (see WrenPlaybackService), consumed by [WrenApp]. */
@@ -38,11 +44,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.opensNowPlaying()) openNowPlaying.value = true
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (isFinishing) (application as WrenApplication).engine.release()
     }
 
     companion object {
