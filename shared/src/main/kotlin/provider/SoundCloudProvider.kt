@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.flow
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
+import models.Shelf
+import models.ShelfCard
 import models.Source
 import util.Log
 import util.TtlCache
@@ -34,7 +36,7 @@ private const val TAG = "SoundCloud"
     override val supportsStations = true
     override val supportsLibrary = true
 
-    override val discoverEmptyHint = "sign_in_or_play_something_to_seed_discover"
+    override val exploreEmptyHint = "sign_in_or_play_something_to_seed_explore"
 
     private const val LIKES_ID = "likes"
 
@@ -53,36 +55,48 @@ private const val TAG = "SoundCloud"
     override suspend fun station(seed: SearchResult): List<SearchResult> = SoundCloud.stationFor(seed)
 
     /**
-     * SoundCloud's own selections first (personalised "Made for you" mixes when a session
-     * exists, curated and trending otherwise), then Wren's locally generated weekly list.
+     * Wren's locally generated weekly list first, then SoundCloud's own "Made for you" mixes —
+     * the platform's answer to a home feed.
      */
-    override suspend fun discover(forceRefresh: Boolean): List<DiscoverSection> {
-        val selections = runCatching { SoundCloud.mixedSelections() }
-            .onFailure { Log.w("SoundCloudProvider", "mixed-selections failed", it) }
-            .getOrDefault(emptyList())
-            .sortedBy { if (it.urn.contains("personali") || it.urn.contains("made-for")) 0 else 1 }
-            .map { sel ->
-                DiscoverSection(
-                    title = sel.title.lowercase(),
-                    collections = sel.items.take(12).map {
-                        DiscoverCollection(it.id, it.title, it.subtitle, it.artworkUrl)
-                    }
-                )
-            }
-
-        val weekly = runCatching { if (forceRefresh) SoundCloudDiscovery.refresh() else SoundCloudDiscovery.current() }
+    override suspend fun home(forceRefresh: Boolean): List<Shelf> {
+        val weekly = runCatching {
+            if (forceRefresh) SoundCloudDiscovery.refresh() else SoundCloudDiscovery.current()
+        }
+            .onFailure { Log.w(TAG, "weekly discovery failed", it) }
             .getOrNull()
         val weeklySection = weekly?.let {
             val generated = Instant.ofEpochMilli(it.generatedAt).atZone(ZoneId.systemDefault()).format(dateFormatter)
             val basis = it.basisGenres.joinToString(", ")
-            DiscoverSection(
+            Shelf(
                 title = "weekly discovery",
                 caption = buildString { append("generated $generated"); if (basis.isNotEmpty()) append(" · based_on: $basis") },
                 tracks = it.tracks
             )
         }
-        return listOfNotNull(weeklySection) + selections
+        return listOfNotNull(weeklySection) + selections { it.isPersonal() }
     }
+
+    /**
+     * The same selections minus the mixes built for this account: SoundCloud's curated and
+     * trending shelves, which is what Explore is for.
+     */
+    override suspend fun explore(): List<Shelf> = selections { !it.isPersonal() }
+
+    private suspend fun selections(keep: (SoundCloud.Selection) -> Boolean): List<Shelf> =
+        runCatching { SoundCloud.mixedSelections() }
+            .onFailure { Log.w(TAG, "mixed-selections failed", it) }
+            .getOrDefault(emptyList())
+            .filter(keep)
+            .map { sel ->
+                Shelf(
+                    title = sel.title.lowercase(),
+                    cards = sel.items.take(12).map { ShelfCard(it.id, it.title, it.subtitle, it.artworkUrl) }
+                )
+            }
+
+    /** SoundCloud marks the mixes it built for this account in the urn. */
+    private fun SoundCloud.Selection.isPersonal(): Boolean =
+        urn.contains("personali") || urn.contains("made-for")
 
     override suspend fun collectionTracks(collectionId: String): List<SearchResult> =
         SoundCloud.collectionTracks(collectionId)

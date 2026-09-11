@@ -259,7 +259,7 @@ private fun Sidebar(
         )
         NavItem(
             code = if (platform == Platform.YOUTUBE) "RAD" else "DSC",
-            label = Providers.of(platform).discoverLabel,
+            label = "explore",
             selected = selectedTab == 1,
             onClick = { onTabChange(1) }
         )

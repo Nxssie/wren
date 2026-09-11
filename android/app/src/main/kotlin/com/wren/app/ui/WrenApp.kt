@@ -120,7 +120,7 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
                     }
                     BottomNav(
                         selected = tab,
-                        discoverLabel = provider.discoverLabel,
+                        discoverLabel = "explore",
                         onSelect = ::navigate,
                     )
                 }

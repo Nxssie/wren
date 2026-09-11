@@ -17,26 +17,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import models.Shelf
+import models.ShelfCard
 import models.toQueueItem
 import player.PlayerEngine
 import util.runCatchingExceptCancellation
-import provider.DiscoverCollection
-import provider.DiscoverSection
 import provider.MusicProvider
 
 @Composable
 fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
-    var sections by remember(provider) { mutableStateOf<List<DiscoverSection>>(emptyList()) }
+    var sections by remember(provider) { mutableStateOf<List<Shelf>>(emptyList()) }
     var loading by remember(provider) { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(provider) {
         loading = true
-        sections = runCatchingExceptCancellation { provider.discover() }.getOrDefault(emptyList())
+        sections = runCatchingExceptCancellation { provider.explore() }.getOrDefault(emptyList())
         loading = false
     }
 
-    fun openCollection(collection: DiscoverCollection) {
+    fun openCollection(collection: ShelfCard) {
         scope.launch {
             val tracks = runCatching { provider.collectionTracks(collection.id) }.getOrDefault(emptyList())
             if (tracks.isNotEmpty()) engine.loadQueue(tracks.map { it.toQueueItem() }, 0, collection.title)
@@ -49,7 +49,7 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
         }
         sections.isEmpty() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(
-                provider.discoverEmptyHint.replace('_', ' '),
+                provider.exploreEmptyHint.replace('_', ' '),
                 color = TextSecondary,
                 fontFamily = FontMono,
                 fontSize = 12.sp,
@@ -59,13 +59,13 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
         else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 12.dp)) {
             sections.forEach { section ->
                 item(key = "header:${section.title}") { SectionHeader(section) }
-                if (section.collections.isNotEmpty()) {
+                if (section.cards.isNotEmpty()) {
                     item(key = "collections:${section.title}") {
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            items(section.collections, key = { it.id }) { collection ->
+                            items(section.cards, key = { it.id }) { collection ->
                                 CollectionCard(collection) { openCollection(collection) }
                             }
                         }
@@ -88,7 +88,7 @@ fun DiscoverScreen(provider: MusicProvider, engine: PlayerEngine) {
 }
 
 @Composable
-private fun SectionHeader(section: DiscoverSection) {
+private fun SectionHeader(section: Shelf) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text(section.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         section.caption?.let {
@@ -98,7 +98,7 @@ private fun SectionHeader(section: DiscoverSection) {
 }
 
 @Composable
-private fun CollectionCard(collection: DiscoverCollection, onClick: () -> Unit) {
+private fun CollectionCard(collection: ShelfCard, onClick: () -> Unit) {
     Column(Modifier.width(140.dp).clickable(onClick = onClick)) {
         Artwork(collection.artworkUrl, Modifier.size(140.dp))
         Spacer(Modifier.height(6.dp))

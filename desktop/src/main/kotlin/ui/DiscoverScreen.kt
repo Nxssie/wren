@@ -22,10 +22,10 @@ import androidx.compose.ui.unit.sp
 import api.resolveStreamUrl
 import kotlinx.coroutines.launch
 import models.SearchResult
+import models.Shelf
+import models.ShelfCard
 import models.toQueueItem
 import player.FFmpegPlayer
-import provider.DiscoverCollection
-import provider.DiscoverSection
 import provider.MusicProvider
 
 /**
@@ -35,10 +35,10 @@ import provider.MusicProvider
  */
 @Composable
 fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
-    var sections by remember { mutableStateOf<List<DiscoverSection>?>(null) }
+    var sections by remember { mutableStateOf<List<Shelf>?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
-    var openCollection by remember { mutableStateOf<DiscoverCollection?>(null) }
+    var openCollection by remember { mutableStateOf<ShelfCard?>(null) }
     var collectionTracks by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
     var collectionLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -48,13 +48,13 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
         loading = true
         error = false
         scope.launch {
-            runCatching { sections = provider.discover(forceRefresh = force) }
+            runCatching { sections = provider.home(forceRefresh = force) }
                 .onFailure { error = true }
             loading = false
         }
     }
 
-    fun open(collection: DiscoverCollection) {
+    fun open(collection: ShelfCard) {
         openCollection = collection
         collectionTracks = emptyList()
         collectionLoading = true
@@ -90,7 +90,7 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
                     )
                 }
             } else {
-                Text("${provider.platform.label} ${provider.discoverLabel};", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("${provider.platform.label} home;", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { load(force = true) }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = TextPrimary)
@@ -126,7 +126,7 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
                 Text("// ${provider.platform.label}_unavailable;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
             }
             current.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("// ${provider.discoverEmptyHint};", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono,
+                Text("// ${provider.homeEmptyHint};", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono,
                     modifier = Modifier.padding(horizontal = 24.dp))
             }
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -137,11 +137,11 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
                             section.caption?.let { Text("// $it;", color = PsSteel400, fontFamily = FontMono, fontSize = 11.sp) }
                         }
                     }
-                    if (section.collections.isNotEmpty()) {
+                    if (section.cards.isNotEmpty()) {
                         item(key = "collections-$sIdx") {
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(section.collections.size, key = { section.collections[it].id }) { i ->
-                                    CollectionCard(section.collections[i]) { open(section.collections[i]) }
+                                items(section.cards.size, key = { section.cards[it].id }) { i ->
+                                    CollectionCard(section.cards[i]) { open(section.cards[i]) }
                                 }
                             }
                         }
@@ -150,7 +150,7 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
                         items(section.tracks.size, key = { "$sIdx-${section.tracks[it].videoId}" }) { index ->
                             TrackRow(section.tracks[index], index, section.tracks, player, onArtistClick = null)
                         }
-                    } else if (section.collections.isEmpty()) {
+                    } else if (section.cards.isEmpty()) {
                         item(key = "empty-$sIdx") {
                             Text("// cold_start_creating_playlist;", color = PsSteel400, fontSize = 12.sp, fontFamily = FontMono,
                                 modifier = Modifier.padding(vertical = 12.dp))
@@ -163,7 +163,7 @@ fun DiscoverScreen(provider: MusicProvider, player: FFmpegPlayer) {
 }
 
 @Composable
-private fun CollectionCard(collection: DiscoverCollection, onClick: () -> Unit) {
+private fun CollectionCard(collection: ShelfCard, onClick: () -> Unit) {
     Column(
         Modifier
             .width(140.dp)
