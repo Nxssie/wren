@@ -13,6 +13,10 @@ import models.ArtistResult
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
+import util.TtlCache
+
+/** Long enough to cover switching tabs, short enough that a like made elsewhere shows up. */
+private const val LIBRARY_TTL_MS = 10 * 60 * 1000L
 
 /**
  * YouTube + YouTube Music behind one provider: both are the same catalog and the same
@@ -21,6 +25,17 @@ import models.SearchResult
 object YouTubeProvider : MusicProvider {
     override val platform = Platform.YOUTUBE
     override val isAuthenticated: Boolean get() = GoogleAuth.isAuthenticated
+
+    // Every one of these walks the whole list page by page and then enriches it, and the screens
+    // that show them are rebuilt on every tab change — so they are cached per account instead of
+    // re-fetched on each visit. See [TtlCache].
+    private val songs = TtlCache<String, List<PlaylistTrack>>(LIBRARY_TTL_MS)
+    private val playlists = TtlCache<String, List<Playlist>>(LIBRARY_TTL_MS)
+    private val artists = TtlCache<String, List<ArtistResult>>(LIBRARY_TTL_MS)
+    private val playlistTracks = TtlCache<String, List<PlaylistTrack>>(LIBRARY_TTL_MS)
+
+    /** Signing out and into another account must never serve the previous one's library. */
+    private fun account(): String = GoogleAuth.accountName ?: "anonymous"
 
     override val supportsArtists = true
     override val supportsStations = true    // per-track radio via the RDAMVM mix
@@ -68,11 +83,15 @@ object YouTubeProvider : MusicProvider {
 
     override suspend fun collectionTracks(collectionId: String): List<SearchResult> = youtubeRadio(collectionId)
 
-    override suspend fun playlists(): List<Playlist> = fetchUserPlaylists()
+    override suspend fun playlists(): List<Playlist> =
+        playlists.getOrLoad(account()) { fetchUserPlaylists() }
 
-    override suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> = fetchPlaylistTracks(playlistId)
+    override suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> =
+        playlistTracks.getOrLoad("${'$'}{account()}|$playlistId") { fetchPlaylistTracks(playlistId) }
 
-    override suspend fun librarySongs(): List<PlaylistTrack> = fetchLikedSongs()
+    override suspend fun librarySongs(): List<PlaylistTrack> =
+        songs.getOrLoad(account()) { fetchLikedSongs() }
 
-    override suspend fun libraryArtists(): List<ArtistResult> = fetchSubscribedChannels()
+    override suspend fun libraryArtists(): List<ArtistResult> =
+        artists.getOrLoad(account()) { fetchSubscribedChannels() }
 }

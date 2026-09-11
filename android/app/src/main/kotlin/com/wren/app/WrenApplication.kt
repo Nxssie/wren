@@ -6,6 +6,7 @@ import api.Streams
 import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
+import provider.LibraryWarmup
 import util.AppDirs
 import util.ThemePreference
 import java.io.File
@@ -35,5 +36,7 @@ class WrenApplication : Application() {
         Streams.resolver = HttpStreamResolver()
         engine = ExoPlayerEngine(this)
         engine.start()
+        // The library costs a walk over every page of it; build it while the user is elsewhere.
+        LibraryWarmup.start()
     }
 }

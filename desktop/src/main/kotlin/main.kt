@@ -2,6 +2,7 @@ import api.warmupStreamConnection
 import auth.AuthStore
 import auth.OAuthConfig
 import androidx.compose.ui.window.application
+import provider.LibraryWarmup
 import ui.AppWindow
 import util.AppDirs
 import util.Log
@@ -15,6 +16,8 @@ fun main() {
     )
     // Before the first window exists, so the choice applies to the first frame (no flash).
     ThemePreference.load()?.let { ui.globalDark = it }
+    // Same reasoning as the app: the library is a long walk, so warm it while the window opens.
+    LibraryWarmup.start()
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         Log.e("Uncaught", "Uncaught exception on thread '${thread.name}'", throwable)
     }
