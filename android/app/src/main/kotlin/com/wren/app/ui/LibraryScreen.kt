@@ -9,6 +9,7 @@ import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
@@ -30,6 +31,8 @@ import models.PlaylistTrack
 import models.toQueueItem
 import player.PlayerEngine
 import provider.MusicProvider
+import util.connectMessage
+import util.runCatchingExceptCancellation
 
 private enum class LibraryTab(val label: String) {
     SONGS("songs"),
@@ -58,6 +61,13 @@ fun LibraryScreen(
     var selectedPlaylist by remember(provider) { mutableStateOf<Playlist?>(null) }
     var tracks by remember(provider) { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
     var loading by remember(provider) { mutableStateOf(false) }
+    // A fetch that failed leaves its list null and shows this instead: an empty list is a fact the
+    // user cannot tell apart from a request that never arrived.
+    var songsError by remember(provider) { mutableStateOf<String?>(null) }
+    var playlistsError by remember(provider) { mutableStateOf<String?>(null) }
+    var artistsError by remember(provider) { mutableStateOf<String?>(null) }
+    var tracksError by remember(provider) { mutableStateOf<String?>(null) }
+    var retry by remember(provider) { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     val queue by engine.queue.collectAsState()
@@ -78,21 +88,37 @@ fun LibraryScreen(
         return
     }
 
-    LaunchedEffect(provider, tab) {
+    LaunchedEffect(provider, tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            songs = runCatching { provider.librarySongs() }.getOrDefault(emptyList())
+            val result = runCatchingExceptCancellation { provider.librarySongs() }
+            songs = result.getOrNull()
+            songsError = result.exceptionOrNull()?.connectMessage()
             loading = false
             songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
-            playlists = runCatching { provider.playlists() }.getOrDefault(emptyList())
+            val result = runCatchingExceptCancellation { provider.playlists() }
+            playlists = result.getOrNull()
+            playlistsError = result.exceptionOrNull()?.connectMessage()
             loading = false
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            artists = runCatching { provider.libraryArtists() }.getOrDefault(emptyList())
+            val result = runCatchingExceptCancellation { provider.libraryArtists() }
+            artists = result.getOrNull()
+            artistsError = result.exceptionOrNull()?.connectMessage()
+            loading = false
+        }
+    }
+
+    fun loadPlaylistTracks(playlist: Playlist) {
+        scope.launch {
+            loading = true
+            val result = runCatchingExceptCancellation { provider.playlistTracks(playlist.id) }
+            tracks = result.getOrNull().orEmpty()
+            tracksError = result.exceptionOrNull()?.connectMessage()
             loading = false
         }
     }
@@ -119,20 +145,47 @@ fun LibraryScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            PlaylistTrackList(tracks, loading, engine, currentId, "this playlist is empty", queueTitle = open.title, liked = liked, onLike = onLike)
+            if (tracksError != null) {
+                LibraryError(tracksError!!) { loadPlaylistTracks(open) }
+            } else {
+                PlaylistTrackList(tracks, loading, engine, currentId, "this playlist is empty", queueTitle = open.title, liked = liked, onLike = onLike)
+            }
         } else {
             LibraryTabSelector(tabs, tab) { tab = it }
-            when (tab) {
+            val error = when (tab) {
+                LibraryTab.SONGS -> songsError
+                LibraryTab.PLAYLISTS -> playlistsError
+                LibraryTab.ARTISTS -> artistsError
+            }
+            if (error != null) {
+                LibraryError(error) { retry++ }
+            } else when (tab) {
                 LibraryTab.SONGS -> PlaylistTrackList(songs, loading, engine, currentId, "no liked songs yet", queueTitle = "liked songs", liked = liked, onLike = onLike)
                 LibraryTab.PLAYLISTS -> PlaylistList(playlists, loading) { playlist ->
                     selectedPlaylist = playlist
-                    scope.launch {
-                        loading = true
-                        tracks = runCatching { provider.playlistTracks(playlist.id) }.getOrDefault(emptyList())
-                        loading = false
-                    }
+                    loadPlaylistTracks(playlist)
                 }
                 LibraryTab.ARTISTS -> ArtistList(artists, loading, onArtistSearch)
+            }
+        }
+    }
+}
+
+/** A failed fetch, with the way out: the list stays null, so retrying is the only exit. */
+@Composable
+private fun LibraryError(message: String, onRetry: () -> Unit) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                message,
+                color = PsSignalDanger,
+                fontFamily = FontMono,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = onRetry) {
+                Text("retry;", color = TextPrimary, fontFamily = FontMono, fontSize = 12.sp)
             }
         }
     }

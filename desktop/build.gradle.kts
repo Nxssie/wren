@@ -89,7 +89,7 @@ kotlin {
 // The real release version. Compose Desktop's Dmg validation requires MAJOR > 0, so macOS
 // gets its own jpackage-internal version below; the public artifact still gets renamed to
 // this version in CI. Deb/Msi have no such restriction and use it directly.
-val appVersion = "0.4.0"
+val appVersion = "0.5.1"
 
 compose.desktop {
     application {
