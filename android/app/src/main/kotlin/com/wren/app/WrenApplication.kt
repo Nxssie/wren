@@ -6,8 +6,8 @@ import api.Streams
 import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
-import com.wren.app.util.ThemePreference
 import util.AppDirs
+import util.ThemePreference
 import java.io.File
 
 /**

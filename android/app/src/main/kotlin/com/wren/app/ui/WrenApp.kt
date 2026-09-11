@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
 import auth.AuthEvents
-import com.wren.app.util.ThemePreference
+import util.ThemePreference
 import player.PlayerEngine
 import provider.Platform
 import provider.Providers
