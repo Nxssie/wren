@@ -1,6 +1,7 @@
 package com.wren.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +35,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -88,9 +90,6 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     var showSoundcloudLogin by remember { mutableStateOf(false) }
     // Set when an artist is tapped in the Library; SearchScreen picks it up and searches.
     var artistSearchName by remember { mutableStateOf<String?>(null) }
-    // Set by a tap on the player bar while the player is already open: the queue sheet is the
-    // thing a second tap should reveal.
-    val showQueue = remember { mutableStateOf(false) }
     val authVersion by AuthEvents.version.collectAsState()
     val provider = remember(platform) { Providers.of(platform) }
 
@@ -110,11 +109,9 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     }
 
     // Outermost back handler: screens register their own (collapse sheet, leave playlist,
-    // close login) and win while enabled; this one only runs once those are exhausted.
+    // close login) and win while enabled; this one only runs once those are exhausted. The
+    // player's own handler is declared with the player, so it outranks the tab underneath.
     BackHandler(enabled = tabHistory.isNotEmpty()) { tab = tabHistory.removeAt(tabHistory.lastIndex) }
-    // Composed after the tab handler, so while the player is open this is the one that answers:
-    // it closes the player and reveals the tab underneath rather than walking the history.
-    BackHandler(enabled = showPlayer && playerHasReturn) { showPlayer = false }
 
     WrenTheme {
         Scaffold(
@@ -128,19 +125,19 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
             },
             bottomBar = {
                 Column {
-                    PlayerBar(engine) {
-                        if (showPlayer) showQueue.value = true else openPlayer(fromInside = true)
+                    // Hidden while the player itself is open: the collapsed sheet at the bottom of
+                    // that screen already carries the same track and expands on a tap, so a second
+                    // copy would only repeat it in less detail.
+                    if (!showPlayer) {
+                        PlayerBar(engine) { openPlayer(fromInside = true) }
                     }
                     BottomNav(selected = tab, onSelect = ::navigate)
                 }
             },
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                // The player replaces the tab body rather than the whole screen, so the bar
-                // stays reachable and a tab tap is one gesture away.
-                if (showPlayer) {
-                    NowPlayingScreen(engine, showQueue)
-                } else when (tab) {
+                // Re-key on auth changes so screens re-run with the new session.
+                when (tab) {
                     WrenTab.HOME -> key(platform, authVersion) { HomeScreen(provider, engine) }
                     WrenTab.SEARCH -> key(platform, authVersion) {
                         SearchScreen(
@@ -157,6 +154,21 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
                             engine = engine,
                             onArtistSearch = { artistSearchName = it; navigate(WrenTab.SEARCH) },
                         )
+                    }
+                }
+
+                // The player draws over the tab instead of replacing it, so closing it returns to
+                // whatever the tab had open — a playlist, a search, a scroll position. It owns the
+                // tab's part of the layout either way, painting its own opaque background.
+                if (showPlayer) {
+                    // Declared here, after the tab, so it answers back before any handler the tab
+                    // registered: what is on screen is the player, so that is what back closes.
+                    BackHandler(enabled = playerHasReturn) { showPlayer = false }
+                    // Handles taps itself so none reach the tab behind it. The player's own layers
+                    // leave a band uncovered mid-drag, between the compact header and the sheet,
+                    // and without this a tap there would land on whatever the tab has at that spot.
+                    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
+                        NowPlayingScreen(engine)
                     }
                 }
             }
