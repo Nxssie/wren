@@ -29,6 +29,7 @@ import api.scClientId
 import auth.SoundCloudAuth
 import auth.SoundCloudOAuth
 import kotlinx.coroutines.launch
+import util.connectMessage
 
 /**
  * SoundCloud's PKCE sign-in page in a WebView we control: the flow redirects to
@@ -49,7 +50,7 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
     LaunchedEffect(Unit) {
         runCatching { SoundCloudOAuth.buildAuthRequest(scClientId()) }
             .onSuccess { request = it }
-            .onFailure { error = it.message?.take(140) ?: "Could not reach SoundCloud" }
+            .onFailure { error = it.connectMessage() }
     }
 
     fun deliver(code: String, req: SoundCloudOAuth.AuthRequest) {
@@ -59,7 +60,7 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
             runCatching { SoundCloudAuth.connect(SoundCloudOAuth.exchangeCode(code, req)) }
                 .onSuccess { onDone() }
                 .onFailure {
-                    error = it.message?.take(140) ?: "Login failed"
+                    error = it.connectMessage()
                     busy = false
                     finishing = false
                 }

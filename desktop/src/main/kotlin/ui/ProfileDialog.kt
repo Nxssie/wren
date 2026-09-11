@@ -6,6 +6,7 @@ import auth.SoundCloudAuth
 import auth.SoundCloudOAuth
 import auth.loadCredentials
 import auth.runGoogleLogin
+import util.connectMessage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -108,7 +109,7 @@ fun ProfileDialog(onDismiss: () -> Unit) {
                             }
                             GoogleAuth.connect(tokens)
                         } catch (e: Exception) {
-                            googleError = e.message?.take(100) ?: "Login failed"
+                            googleError = e.connectMessage()
                         } finally {
                             googleAuthUrl = null
                         }
@@ -154,7 +155,7 @@ fun ProfileDialog(onDismiss: () -> Unit) {
                             SoundCloudAuth.connect(SoundCloudOAuth.exchangeCode(code, request))
                             scTokenInput = ""
                         } catch (e: Exception) {
-                            scError = e.message?.take(100) ?: "Login failed"
+                            scError = e.connectMessage()
                         } finally {
                             scConnecting = false
                         }
@@ -209,7 +210,7 @@ fun ProfileDialog(onDismiss: () -> Unit) {
                                     scope.launch {
                                         runCatching { SoundCloudAuth.connect(scTokenInput.trim()) }
                                             .onSuccess { scTokenInput = "" }
-                                            .onFailure { scError = it.message?.take(100) ?: "Invalid token" }
+                                            .onFailure { scError = it.connectMessage() }
                                         scConnecting = false
                                     }
                                 },

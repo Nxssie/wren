@@ -21,6 +21,7 @@ import auth.AuthStore
 import auth.GoogleAuth
 import auth.SoundCloudAuth
 import auth.loadCredentials
+import util.connectMessage
 import auth.runGoogleLogin
 import com.wren.app.util.openInBrowser
 import kotlinx.coroutines.launch
@@ -111,7 +112,7 @@ fun AccountsDialog(
                                 val tokens = runGoogleLogin(creds) { url -> openInBrowser(context, url) }
                                 GoogleAuth.connect(tokens)
                             } catch (e: Exception) {
-                                googleError = e.message?.take(140) ?: "Login failed"
+                                googleError = e.connectMessage()
                             } finally {
                                 awaitingBrowser = false
                             }
@@ -170,7 +171,7 @@ fun AccountsDialog(
                                 scope.launch {
                                     runCatching { SoundCloudAuth.connect(scTokenInput.trim()) }
                                         .onSuccess { scTokenInput = "" }
-                                        .onFailure { scError = it.message?.take(140) ?: "Invalid token" }
+                                        .onFailure { scError = it.connectMessage() }
                                     scConnecting = false
                                 }
                             },
