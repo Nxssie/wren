@@ -171,6 +171,19 @@ already installed on a phone can be replaced without uninstalling. Both accept a
 from the same string — `wren-0.4.0.apk`, or `wren-<version>-unsigned.apk` when the signing
 variables above are missing.
 
+Publishing is manual by design — the APK reaches a release page when you decide it does, never
+as a side effect of pushing:
+
+```bash
+git tag v0.5.0 && git push origin v0.5.0
+mise run android:release        # builds, checks the signature, uploads to release v0.5.0
+```
+
+The task refuses to run on a dirty tree or an untagged commit (the APK name comes from git, so
+there would be nothing to trace it to), verifies the APK is signed by `CN=wren` before
+uploading, and adds the asset to the release the tag already has — the desktop artifacts and
+the APK end up on the same page.
+
 Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
 and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).
 

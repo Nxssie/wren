@@ -12,6 +12,10 @@ run = "./gradlew :android:app:assembleRelease"
 description = "Build the debug APK"
 run = "./gradlew :android:app:assembleDebug"
 
+[tasks."android:release"]
+description = "Upload the signed APK of the current tag to its GitHub release (manual, never CI)"
+run = "./scripts/publish-android-release.sh"
+
 [tasks."android:install"]
 description = "Install the release APK on the connected device"
 depends = ["android:apk"]
