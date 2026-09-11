@@ -77,6 +77,9 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     var showSoundcloudLogin by remember { mutableStateOf(false) }
     // Set when an artist is tapped in the Library; SearchScreen picks it up and searches.
     var artistSearchName by remember { mutableStateOf<String?>(null) }
+    // Set by a tap on the player bar while already on Now Playing, where there is no tab to
+    // switch to: the queue sheet is the thing that tap should open.
+    val showQueue = remember { mutableStateOf(false) }
     val authVersion by AuthEvents.version.collectAsState()
     val provider = remember(platform) { Providers.of(platform) }
 
@@ -112,7 +115,9 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
             },
             bottomBar = {
                 Column {
-                    PlayerBar(engine) { navigate(WrenTab.NOW_PLAYING) }
+                    PlayerBar(engine) {
+                        if (tab == WrenTab.NOW_PLAYING) showQueue.value = true else navigate(WrenTab.NOW_PLAYING)
+                    }
                     BottomNav(
                         selected = tab,
                         discoverLabel = provider.discoverLabel,
@@ -140,7 +145,7 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
                             onArtistSearch = { artistSearchName = it; navigate(WrenTab.SEARCH) },
                         )
                     }
-                    WrenTab.NOW_PLAYING -> NowPlayingScreen(engine)
+                    WrenTab.NOW_PLAYING -> NowPlayingScreen(engine, showQueue)
                 }
             }
         }

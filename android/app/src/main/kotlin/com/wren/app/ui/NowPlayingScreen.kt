@@ -87,9 +87,12 @@ private val Anchors = listOf(0f, 0.5f, 1f)
  *  - **queue** (progress 1): a compact header (thumb, title, play) at the top, queue below.
  *
  * One `progress` value drives every layer, so any drag position is a valid frame.
+ *
+ * @param showQueue raised by a tap on the player bar (there is no tab to switch to when Now
+ *   Playing is already open); consumed here to open the queue sheet.
  */
 @Composable
-fun NowPlayingScreen(engine: PlayerEngine) {
+fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
     val queue by engine.queue.collectAsState()
     val index by engine.queueIndex.collectAsState()
     val isPlaying by engine.isPlaying.collectAsState()
@@ -181,6 +184,14 @@ fun NowPlayingScreen(engine: PlayerEngine) {
 
         // Back closes the queue sheet before it leaves Now Playing.
         BackHandler(enabled = progress > 0.01f) { settle(4_000f) }
+
+        // Tapping the player bar while already here opens the queue, the same resting state a
+        // drag up would reach. Cleared on use so leaving and returning does not reopen it.
+        LaunchedEffect(showQueue.value) {
+            if (!showQueue.value) return@LaunchedEffect
+            sheet.animateTo(Anchors.last(), spring(stiffness = Spring.StiffnessLow))
+            showQueue.value = false
+        }
 
         val listState = rememberLazyListState()
         LaunchedEffect(expanded, index) {
