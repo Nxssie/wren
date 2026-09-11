@@ -28,8 +28,28 @@ object SoundCloudWebSignIn {
     /** The key the web player stores its own token under. */
     const val TOKEN_KEY = "oauth_token"
 
+    /**
+     * And the key it stores the refresh token under. SoundCloud's own bundle names it:
+     * `REFRESH_TOKEN_COOKIE_NAME = "oauth_refresh_token"`, set right after the token exchange.
+     */
+    const val REFRESH_TOKEN_KEY = "oauth_refresh_token"
+
     /** Reads the token out of the page's own storage; evaluated in the WebView. */
     val TOKEN_SCRIPT: String = "window.localStorage.getItem('$TOKEN_KEY')"
+
+    /** What the page left behind: the session, the key that renews it, and who issued it. */
+    data class Session(val accessToken: String, val refreshToken: String?, val clientId: String?)
+
+    /**
+     * The client id that issued the session, read off the authorize URL the page navigates to.
+     * A refresh has to be presented by the client that got the grant, and SoundCloud's mobile
+     * flow uses a different id from the one the api-v2 scrape returns.
+     */
+    fun clientIdFromAuthUrl(url: String?): String? = url
+        ?.substringAfter("client_id=", "")
+        ?.substringBefore('&')
+        ?.substringBefore('#')
+        ?.takeIf { it.length == 32 && it.all(Char::isLetterOrDigit) }
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -46,14 +66,14 @@ object SoundCloudWebSignIn {
     }
 
     /**
-     * The cookie jar as a fallback, for the times the token is served as a cookie rather than
-     * kept in storage. Give it the raw `Cookie` header for [ORIGIN].
+     * One cookie out of a jar, for the times the token is served as a cookie rather than kept in
+     * storage. Give it the raw `Cookie` header for [ORIGIN].
      */
-    fun tokenFromCookies(cookies: String?): String? = cookies
+    fun tokenFromCookies(cookies: String?, name: String = TOKEN_KEY): String? = cookies
         ?.split(';')
         ?.mapNotNull { pair ->
-            val name = pair.substringBefore('=', "").trim()
-            if (name != TOKEN_KEY) null else pair.substringAfter('=', "").trim().ifBlank { null }
+            val cookieName = pair.substringBefore('=', "").trim()
+            if (cookieName != name) null else pair.substringAfter('=', "").trim().ifBlank { null }
         }
         ?.firstOrNull()
 }

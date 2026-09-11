@@ -27,14 +27,16 @@ object SoundCloudOAuth {
     data class Tokens(
         val accessToken: String,
         val refreshToken: String?,
-        val expiresAt: Long?
+        val expiresAt: Long?,
+        /** Who issued it: a refresh has to come from the same client as the grant. */
+        val clientId: String? = null
     )
 
-    suspend fun refresh(refreshToken: String, clientId: String): Tokens = withContext(Dispatchers.IO) {
+    suspend fun refresh(refreshToken: String, clientId: String?): Tokens = withContext(Dispatchers.IO) {
         postToken(
             "grant_type=refresh_token" +
                 "&refresh_token=${encode(refreshToken)}" +
-                "&client_id=${encode(clientId)}"
+                "&client_id=${encode(clientId.orEmpty())}"
         )
     }
 

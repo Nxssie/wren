@@ -95,21 +95,25 @@ private const val SC_BASE = "https://api-v2.soundcloud.com"
 internal suspend fun scGetJson(path: String): JsonObject? = scGetJsonElement(path)?.let { it as? JsonObject }
 
 internal suspend fun scGetJsonElement(path: String): JsonElement? {
-    SoundCloudAuth.ensureValidToken()
-    val token = SoundCloudAuth.accessToken
     val clientId = scClientId()
     val separator = if ('?' in path) "&" else "?"
-    val fullUrl = "$SC_BASE$path${separator}client_id=$clientId"
-    val resp = httpGetJson(fullUrl, token)
-    if (resp == null || resp.status in 401..403) {
-        // Possibly stale client_id — invalidate and retry once
-        Log.w("SoundCloud", "API returned ${resp?.status} for $path — re-scraping client_id")
-        invalidateClientId()
-        val newClientId = runCatching { scClientId() }.getOrNull() ?: return null
-        val retryUrl = "$SC_BASE$path${separator}client_id=$newClientId"
-        return httpGetJson(retryUrl, token)?.takeIf { it.status in 200..299 }?.body
+    fun urlFor(id: String) = "$SC_BASE$path${separator}client_id=$id"
+
+    val first = httpGetJson(urlFor(clientId), SoundCloudAuth.accessToken)
+    if (first != null && first.status in 200..299) return first.body
+
+    // A refusal is the only sign the page's session went stale: it carries no expiry we can read,
+    // so the token is renewed on being turned away rather than on a clock we would have to invent.
+    if (first != null && first.status in 401..403 && SoundCloudAuth.refreshNow()) {
+        val afterRefresh = httpGetJson(urlFor(clientId), SoundCloudAuth.accessToken)
+        if (afterRefresh != null && afterRefresh.status in 200..299) return afterRefresh.body
     }
-    return resp.takeIf { it.status in 200..299 }?.body
+
+    // Otherwise the client_id is the stale half — invalidate and retry once.
+    Log.w("SoundCloud", "API returned ${first?.status} for $path — re-scraping client_id")
+    invalidateClientId()
+    val newClientId = runCatching { scClientId() }.getOrNull() ?: return null
+    return httpGetJson(urlFor(newClientId), SoundCloudAuth.accessToken)?.takeIf { it.status in 200..299 }?.body
 }
 
 private data class JsonResp(val status: Int, val body: JsonElement)
@@ -304,17 +308,24 @@ object SoundCloud {
 
     /** Like or unlike [trackId] for the signed-in user. False when there is no session or the call failed. */
     suspend fun setLiked(trackId: Long, liked: Boolean): Boolean = withContext(Dispatchers.IO) {
-        SoundCloudAuth.ensureValidToken()
         val userId = SoundCloudAuth.userId ?: return@withContext false
-        val token = SoundCloudAuth.accessToken ?: return@withContext false
         val clientId = scClientId()
-        val resp = runCatching {
+
+        suspend fun attempt(): Http.Response? = runCatching {
             Http.request(
                 method = if (liked) "PUT" else "DELETE",
                 url = "$SC_BASE/users/$userId/track_likes/$trackId?client_id=$clientId",
-                headers = mapOf("User-Agent" to SC_USER_AGENT, "Authorization" to "OAuth $token"),
+                headers = mapOf(
+                    "User-Agent" to SC_USER_AGENT,
+                    "Authorization" to "OAuth ${SoundCloudAuth.accessToken.orEmpty()}",
+                ),
             )
         }.onFailure { Log.e("SoundCloud", "like request failed for $trackId", it) }.getOrNull()
+
+        var resp = attempt()
+        // Same as any other call: a refusal is how the session says its token went stale.
+        if (resp != null && resp.code in 401..403 && SoundCloudAuth.refreshNow()) resp = attempt()
+
         val ok = resp != null && resp.code in 200..299
         if (!ok) Log.w("SoundCloud", "like ${if (liked) "PUT" else "DELETE"} $trackId -> ${resp?.code}")
         ok

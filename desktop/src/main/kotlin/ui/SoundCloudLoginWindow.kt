@@ -58,16 +58,20 @@ object SoundCloudLoginWindow {
     private val cookieManager = CookieManager(null, CookiePolicy.ACCEPT_ALL)
     private var stage: Stage? = null
 
+    /** The client that ran the sign-in, captured off the authorize URL on the way past. */
+    @Volatile private var authClientId: String? = null
+
     /**
      * Opens the sign-in page. Completes with the SoundCloud token on success, or exceptionally on
      * cancel / error / toolkit failure. Cancelling the returned Deferred closes the window.
      */
-    fun open(): Deferred<String> {
-        val deferred = CompletableDeferred<String>()
+    fun open(): Deferred<SoundCloudWebSignIn.Session> {
+        val deferred = CompletableDeferred<SoundCloudWebSignIn.Session>()
 
         // Fresh cookie jar per attempt: no stale session, no silent re-login.
         cookieManager.cookieStore.removeAll()
         CookieHandler.setDefault(cookieManager)
+        authClientId = null
 
         runCatching { ensureToolkit { showStage(deferred) } }
             .onFailure { e ->
@@ -103,7 +107,7 @@ object SoundCloudLoginWindow {
     }
 
     /** Runs on the FX thread. */
-    private fun showStage(deferred: CompletableDeferred<String>) {
+    private fun showStage(deferred: CompletableDeferred<SoundCloudWebSignIn.Session>) {
         // Only one login window at a time.
         stage?.close()
 
@@ -155,20 +159,24 @@ object SoundCloudLoginWindow {
         }
     }
 
-    /** Waits for the page to keep a token, then hands it over; the caller validates it. */
-    private suspend fun pollForToken(engine: WebEngine, deferred: CompletableDeferred<String>) {
+    /** Waits for the page to keep a session, then hands it over; the caller validates it. */
+    private suspend fun pollForToken(
+        engine: WebEngine,
+        deferred: CompletableDeferred<SoundCloudWebSignIn.Session>,
+    ) {
         while (currentCoroutineContext().isActive) {
             delay(POLL_MS)
-            val stored = readScript(engine)
-            if (stored != null) {
-                Log.i(TAG, "token found in the page's storage (${stored.length} chars)")
-                deferred.complete(stored)
-                return
-            }
-            val cookie = tokenFromJar()
-            if (cookie != null) {
-                Log.i(TAG, "token found in the cookie jar (${cookie.length} chars)")
-                deferred.complete(cookie)
+            // Storage first for the desktop web player, the jar for the session it serves.
+            val access = readScript(engine) ?: cookie(SoundCloudWebSignIn.TOKEN_KEY)
+            if (access != null) {
+                val refresh = cookie(SoundCloudWebSignIn.REFRESH_TOKEN_KEY)
+                Log.i(
+                    TAG,
+                    "session found (access ${access.length} chars, refresh " +
+                        "${if (refresh == null) "absent" else "${refresh.length} chars"}, " +
+                        "client ${authClientId ?: "unknown"})"
+                )
+                deferred.complete(SoundCloudWebSignIn.Session(access, refresh, authClientId))
                 return
             }
         }
@@ -183,11 +191,11 @@ object SoundCloudLoginWindow {
     }
 
     /**
-     * The JavaFX jar is a real cookie store, so it can be asked directly rather than parsed. It
-     * is the backstop for the times the token is served as a cookie instead of being stored.
+     * The JavaFX jar is a real cookie store, so it can be asked by name rather than parsed. It is
+     * where the page keeps both halves of the session.
      */
-    private fun tokenFromJar(): String? = cookieManager.cookieStore.cookies
-        .filter { it.name == SoundCloudWebSignIn.TOKEN_KEY }
+    private fun cookie(name: String): String? = cookieManager.cookieStore.cookies
+        .filter { it.name == name }
         .mapNotNull { it.value?.takeIf(String::isNotBlank) }
         .firstOrNull()
 
@@ -196,7 +204,10 @@ object SoundCloudLoginWindow {
         engine.isJavaScriptEnabled = true
         engine.userAgent = USER_AGENT
 
-        engine.locationProperty().addListener { _, _, location -> Log.d(TAG, "[$name] navigate: $location") }
+        engine.locationProperty().addListener { _, _, location ->
+            SoundCloudWebSignIn.clientIdFromAuthUrl(location)?.let { authClientId = it }
+            Log.d(TAG, "[$name] navigate: ${location?.substringBefore('?')}")
+        }
         engine.loadWorker.stateProperty().addListener { _, _, state ->
             when (state) {
                 // The title is what tells a challenge apart from a sign-in not yet completed.

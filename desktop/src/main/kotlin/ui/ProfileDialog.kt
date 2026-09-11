@@ -148,9 +148,9 @@ fun ProfileDialog(onDismiss: () -> Unit) {
                     scope.launch {
                         try {
                             // The ordinary sign-in page, not the authorization endpoint: the app
-                            // reads the token the page keeps for itself and validates it as usual.
-                            val token = SoundCloudLoginWindow.open().await()
-                            SoundCloudAuth.connect(token)
+                            // reads the session the page keeps for itself and validates it as usual.
+                            val session = SoundCloudLoginWindow.open().await()
+                            SoundCloudAuth.connect(session.accessToken, session.refreshToken, session.clientId)
                             scTokenInput = ""
                         } catch (e: Exception) {
                             scError = e.connectMessage()

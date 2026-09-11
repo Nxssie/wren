@@ -54,16 +54,16 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
-    fun deliver(token: String) {
+    fun deliver(session: SoundCloudWebSignIn.Session) {
         if (busy) return
         busy = true
         scope.launch {
-            // Validation is the same call the pasted-token path uses, so a token that does not
+            // Validation is the same call the pasted-token path uses, so a session that does not
             // work is rejected here rather than stored and discovered later.
-            runCatching { SoundCloudAuth.connect(token) }
+            runCatching { SoundCloudAuth.connect(session.accessToken, session.refreshToken, session.clientId) }
                 .onSuccess { onDone() }
                 .onFailure {
-                    Log.w(TAG, "the token from the page was refused", it)
+                    Log.w(TAG, "the session from the page was refused", it)
                     error = it.connectMessage()
                     busy = false
                 }
@@ -130,7 +130,7 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
 @Composable
 private fun SoundCloudWebView(
     context: Context,
-    onToken: (String) -> Unit,
+    onToken: (SoundCloudWebSignIn.Session) -> Unit,
     onCancel: () -> Unit,
 ) {
     val deliver by rememberUpdatedState(onToken)
@@ -158,18 +158,22 @@ private fun SoundCloudWebView(
     LaunchedEffect(holder) {
         while (isActive) {
             delay(TOKEN_POLL_MS)
-            val stored = holder.main.storedToken()
-            if (stored != null) {
-                Log.i(TAG, "token found in the page's storage (${stored.length} chars)")
-                deliver(stored)
-                return@LaunchedEffect
-            }
-            // The jar belongs to the origin the flow actually used, which is m.soundcloud.com.
-            val cookie = listOf("https://soundcloud.com", "https://m.soundcloud.com")
-                .firstNotNullOfOrNull { SoundCloudWebSignIn.tokenFromCookies(CookieManager.getInstance().getCookie(it)) }
-            if (cookie != null) {
-                Log.i(TAG, "token found in the cookie jar (${cookie.length} chars)")
-                deliver(cookie)
+            // Both cookies come from the same exchange, and the jar belongs to the origin the flow
+            // actually used, which is m.soundcloud.com rather than soundcloud.com.
+            val jars = listOf("https://soundcloud.com", "https://m.soundcloud.com")
+                .map { CookieManager.getInstance().getCookie(it) }
+            fun cookie(name: String) = jars.firstNotNullOfOrNull { SoundCloudWebSignIn.tokenFromCookies(it, name) }
+
+            val access = holder.main.storedToken() ?: cookie(SoundCloudWebSignIn.TOKEN_KEY)
+            if (access != null) {
+                val refresh = cookie(SoundCloudWebSignIn.REFRESH_TOKEN_KEY)
+                Log.i(
+                    TAG,
+                    "session found (access ${access.length} chars, refresh " +
+                        "${if (refresh == null) "absent" else "${refresh.length} chars"}, " +
+                        "client ${holder.authClientId ?: "unknown"})"
+                )
+                deliver(SoundCloudWebSignIn.Session(access, refresh, holder.authClientId))
                 return@LaunchedEffect
             }
         }
@@ -203,6 +207,10 @@ private class WebLoginWebViews(
 ) {
     val main: WebView = create()
 
+    /** The client that ran the sign-in, captured off the authorize URL on the way past. */
+    var authClientId: String? = null
+        private set
+
     fun destroy() {
         popups.forEach { runCatching { it.destroy() } }
         popups.clear()
@@ -229,6 +237,7 @@ private class WebLoginWebViews(
 
         webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
+                SoundCloudWebSignIn.clientIdFromAuthUrl(url)?.let { authClientId = it }
                 // The query is left off on purpose: the callback carries an authorization code.
                 Log.i(TAG, "loaded ${url?.substringBefore('?')} — title=\"${view?.title}\"")
             }
