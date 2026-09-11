@@ -57,7 +57,7 @@ fun LibraryScreen(
     var playlists by remember { mutableStateOf<List<Playlist>?>(null) }
     var artists by remember { mutableStateOf<List<ArtistResult>?>(null) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
-    var tracks by remember { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
+    var tracks by remember { mutableStateOf<List<PlaylistTrack>?>(null) }
     var loading by remember { mutableStateOf(false) }
     // A fetch that failed leaves its list null and shows this instead: an empty list is a fact
     // the user cannot tell apart from a request that never arrived.
@@ -147,7 +147,7 @@ fun LibraryScreen(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { selectedPlaylist = null; tracks = emptyList() }) {
+                IconButton(onClick = { selectedPlaylist = null; tracks = null }) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
                 Spacer(Modifier.width(4.dp))
@@ -155,13 +155,14 @@ fun LibraryScreen(
             }
             if (tracksError != null) {
                 LibraryError(tracksError!!) { loadPlaylistTracks(openPlaylist) }
-            } else if (loading) {
+            } else if (loading || tracks == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = PsInk900)
                 }
             } else {
+                val loaded = tracks.orEmpty()
                 LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                    items(tracks.size) { index -> PlaylistTrackRow(tracks[index], index, tracks, player) }
+                    items(loaded.size) { index -> PlaylistTrackRow(loaded[index], index, loaded, player) }
                 }
             }
             return@Column
@@ -248,11 +249,13 @@ private fun LibraryTabs(
 
 @Composable
 private fun TrackList(list: List<PlaylistTrack>?, loading: Boolean, player: FFmpegPlayer, emptyHint: String) {
-    if (loading) {
+    // A null list has not arrived yet: showing the empty hint there tells the user their library
+    // is empty while it is still being fetched.
+    if (loading || list == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsInk900)
         }
-    } else if (list.isNullOrEmpty()) {
+    } else if (list.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(emptyHint, color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
@@ -266,10 +269,10 @@ private fun TrackList(list: List<PlaylistTrack>?, loading: Boolean, player: FFmp
 @Composable
 private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playlist) -> Unit) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsInk900)
         }
-        list.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("// no_playlists_found;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
         else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -281,10 +284,10 @@ private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playl
 @Composable
 private fun ArtistList(list: List<ArtistResult>?, loading: Boolean, onArtistClick: (browseId: String, name: String) -> Unit) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsInk900)
         }
-        list.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("// no_followed_artists;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
         else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 4.dp)) {

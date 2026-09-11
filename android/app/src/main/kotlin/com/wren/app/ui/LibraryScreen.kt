@@ -62,7 +62,7 @@ fun LibraryScreen(
     var playlists by remember(provider) { mutableStateOf<List<Playlist>?>(null) }
     var artists by remember(provider) { mutableStateOf<List<ArtistResult>?>(null) }
     var selectedPlaylist by remember(provider) { mutableStateOf<Playlist?>(null) }
-    var tracks by remember(provider) { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
+    var tracks by remember(provider) { mutableStateOf<List<PlaylistTrack>?>(null) }
     var loading by remember(provider) { mutableStateOf(false) }
     // A fetch that failed leaves its list null and shows this instead: an empty list is a fact the
     // user cannot tell apart from a request that never arrived.
@@ -134,7 +134,7 @@ fun LibraryScreen(
     }
 
     // Back leaves an open playlist before it leaves the tab.
-    BackHandler(enabled = selectedPlaylist != null) { selectedPlaylist = null; tracks = emptyList() }
+    BackHandler(enabled = selectedPlaylist != null) { selectedPlaylist = null; tracks = null }
 
     Column(Modifier.fillMaxSize()) {
         val open = selectedPlaylist
@@ -143,7 +143,7 @@ fun LibraryScreen(
                 Modifier.fillMaxWidth().padding(start = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { selectedPlaylist = null; tracks = emptyList() }) {
+                IconButton(onClick = { selectedPlaylist = null; tracks = null }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
                 Text(
@@ -240,10 +240,12 @@ private fun PlaylistTrackList(
     onLike: ((PlaylistTrack) -> Unit)?,
 ) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        // A null list has not arrived yet: showing the empty hint there tells the user their
+        // library is empty while it is still being fetched.
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
         }
-        list.isNullOrEmpty() -> LibraryNotice(emptyHint)
+        list.isEmpty() -> LibraryNotice(emptyHint)
         else -> LazyColumn(Modifier.fillMaxSize()) {
             itemsIndexed(list, key = { index, item -> "${item.source}:${item.videoId}:$index" }) { index, item ->
                 TrackRow(
@@ -265,10 +267,10 @@ private fun PlaylistTrackList(
 @Composable
 private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playlist) -> Unit) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
         }
-        list.isNullOrEmpty() -> LibraryNotice("no playlists found")
+        list.isEmpty() -> LibraryNotice("no playlists found")
         else -> LazyColumn(Modifier.fillMaxSize()) {
             items(list, key = { it.id }) { playlist ->
                 TrackRow(
@@ -290,10 +292,10 @@ private fun ArtistList(
     onArtistSearch: (String) -> Unit,
 ) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
         }
-        list.isNullOrEmpty() -> LibraryNotice("no followed artists")
+        list.isEmpty() -> LibraryNotice("no followed artists")
         else -> LazyColumn(Modifier.fillMaxSize()) {
             items(list, key = { it.browseId }) { artist ->
                 TrackRow(
