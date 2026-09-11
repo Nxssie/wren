@@ -1,10 +1,12 @@
 package api
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import util.Http
 import util.Log
+import util.runCatchingExceptCancellation
 import java.net.URLEncoder
 
 /**
@@ -115,25 +117,62 @@ class HttpStreamResolver : StreamResolver {
         Regex("[?&]ip=([^&]+)").find(url)?.groupValues?.get(1)?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "?"
 
     private suspend fun soundCloudProgressive(permalink: String): String? = withContext(Dispatchers.IO) {
-        runCatching {
-            val clientId = scClientId()
-            val resolved = Http.get(
-                "https://api-v2.soundcloud.com/resolve?url=${URLEncoder.encode(permalink, "UTF-8")}&client_id=$clientId",
-                headers = mapOf("User-Agent" to SC_UA),
-            )
-            if (!resolved.isSuccessful) return@runCatching null
-            val track = SC_JSON.parseToJsonElement(resolved.body).jsonObject
-            val transcodings = track["media"]?.jsonObject?.get("transcodings")?.jsonArray ?: return@runCatching null
-            val transcodeUrl = transcodings.firstNotNullOfOrNull { t ->
-                val obj = t.jsonObject
-                if (obj["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.content != "progressive") return@firstNotNullOfOrNull null
-                obj["url"]?.jsonPrimitive?.content
-            } ?: return@runCatching null
+        // Not `runCatching`: that also swallows CancellationException, so changing track mid-resolve
+        // came back as "no stream" and the caller skipped a second time on top of the one that
+        // cancelled it.
+        runCatchingExceptCancellation {
+            val track = scApiGet("/resolve?url=${URLEncoder.encode(permalink, "UTF-8")}", permalink)
+                ?: return@runCatchingExceptCancellation null
 
-            val stream = Http.get("$transcodeUrl?client_id=$clientId", headers = mapOf("User-Agent" to SC_UA))
-            if (!stream.isSuccessful) return@runCatching null
-            SC_JSON.parseToJsonElement(stream.body).jsonObject["url"]?.jsonPrimitive?.content
+            val transcodings = track["media"]?.jsonObject?.get("transcodings")?.jsonArray
+                ?: return@runCatchingExceptCancellation null
+            val progressive = transcodings.mapNotNull { it as? JsonObject }
+                .filter { it["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull == "progressive" }
+            val streamUrl = progressive.firstNotNullOfOrNull { it["url"]?.jsonPrimitive?.contentOrNull }
+            if (streamUrl == null) {
+                // A track that only offers HLS fails here for good, which is worth telling apart
+                // from a fetch that merely went wrong.
+                val offered = transcodings.mapNotNull {
+                    it.jsonObject["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull
+                }
+                Log.w("HttpStreamResolver", "no progressive transcoding for $permalink (offered: $offered)")
+                return@runCatchingExceptCancellation null
+            }
+
+            scApiGet(streamUrl, permalink)?.get("url")?.jsonPrimitive?.contentOrNull
         }.onFailure { Log.e("HttpStreamResolver", "SoundCloud stream failed for $permalink", it) }.getOrNull()
+    }
+
+    /**
+     * A GET carrying the scraped client id, retried once when the id is what got refused.
+     *
+     * That id is cached for six hours and is the only thing authenticating these calls, so a
+     * stale one fails every stream for the rest of the cache window — while the library path,
+     * which re-scrapes on a 401, recovers on its own. Same signal, same response here.
+     */
+    private suspend fun scApiGet(path: String, what: String): JsonObject? {
+        val base = if (path.startsWith("http")) path else "https://api-v2.soundcloud.com$path"
+        val separator = if ('?' in base) "&" else "?"
+
+        repeat(2) { attempt ->
+            val response = runCatchingExceptCancellation {
+                Http.get("$base${separator}client_id=${scClientId()}", headers = mapOf("User-Agent" to SC_UA))
+            }.getOrNull()
+
+            if (response == null) {
+                // A connection that never got there is the other thing worth a second try.
+                Log.w("HttpStreamResolver", "$what could not be reached (attempt ${attempt + 1})")
+            } else if (response.isSuccessful) {
+                return runCatching { SC_JSON.parseToJsonElement(response.body).jsonObject }.getOrNull()
+            } else {
+                Log.w("HttpStreamResolver", "$what returned ${response.code} (attempt ${attempt + 1})")
+                if (response.code !in 401..403 && response.code < 500) return null
+                if (response.code in 401..403) invalidateClientId()
+            }
+
+            if (attempt == 0) delay(300)
+        }
+        return null
     }
 
     private data class InnerTubeClient(

@@ -6,6 +6,7 @@ import auth.SoundCloudAuth
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -23,6 +24,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -153,7 +155,6 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
                                 onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                             )
                             // key(platform): each platform keeps its own screen state
-                            showNowPlaying -> NowPlayingScreen(player)
                             selectedTab == 0 -> key(platform) { HomeScreen(provider, player) }
                             selectedTab == 1 -> key(platform) {
                                 SearchScreen(
@@ -169,6 +170,21 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
                                     player = player,
                                     onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                                 )
+                            }
+                        }
+
+                        // Over the tab, not instead of it: closing the player returns to whatever the
+                        // tab had open, rather than rebuilding the tab at its root.
+                        if (showNowPlaying) {
+                            // Also swallows taps of its own, so none reach the tab behind it where
+                            // the player's layers leave a gap.
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(Background)
+                                    .pointerInput(Unit) { detectTapGestures { } }
+                            ) {
+                                NowPlayingScreen(player)
                             }
                         }
                     }

@@ -3,6 +3,7 @@ package com.wren.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +26,7 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -37,12 +40,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -58,11 +63,14 @@ import com.wren.app.util.artworkFor
 import com.wren.app.util.downloadsDestination
 import download.DownloadManager
 import models.Source
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import models.LyricsResult
 import models.QueueItem
 import models.RepeatMode
 import player.PlayerEngine
+import util.runCatchingExceptCancellation
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -77,6 +85,17 @@ private val CompactHeaderHeight = 80.dp
  */
 private val Anchors = listOf(0f, 0.5f, 1f)
 
+/** How long a manual scroll buys quiet before auto-scroll resumes, so reading ahead is possible. */
+private const val USER_SCROLL_GRACE_MS = 6_000L
+
+/** What the lyrics surface is showing. There is no idle: a track is always known by then. */
+private sealed class LyricsState {
+    object Loading : LyricsState()
+    object NotFound : LyricsState()
+    object Unavailable : LyricsState()
+    data class Loaded(val result: LyricsResult) : LyricsState()
+}
+
 /**
  * YouTube Music-style now playing with a queue sheet that has three states:
  *
@@ -88,11 +107,11 @@ private val Anchors = listOf(0f, 0.5f, 1f)
  *
  * One `progress` value drives every layer, so any drag position is a valid frame.
  *
- * @param showQueue raised by a tap on the player bar (there is no tab to switch to when Now
- *   Playing is already open); consumed here to open the queue sheet.
+ * The collapsed sheet is itself the way in: its strip is tappable and draggable, so there is
+ * nothing for a separate mini player to do while this screen is open.
  */
 @Composable
-fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
+fun NowPlayingScreen(engine: PlayerEngine) {
     val queue by engine.queue.collectAsState()
     val index by engine.queueIndex.collectAsState()
     val isPlaying by engine.isPlaying.collectAsState()
@@ -108,23 +127,43 @@ fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
 
     val item = queue.getOrNull(index)
     val artworkUrl = artworkFor(item)
-    // Only SoundCloud tracks can be saved (YouTube streams are not ours to keep).
-    val download: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD }?.let { track ->
-        { DownloadManager.enqueue(track, downloadsDestination(context)) }
-    }
+    // Only SoundCloud tracks can be saved, and only when saving has been turned on: the request
+    // is anonymous, but a client fetching whole files is what gets a client id rotated.
+    val download: (() -> Unit)? = item
+        ?.takeIf { it.source == Source.SOUNDCLOUD && allowSoundCloudDownloads }
+        ?.let { track -> { DownloadManager.enqueue(track, downloadsDestination(context)) } }
     val like: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD && SoundCloudAuth.isAuthenticated }?.let { track ->
         { scope.launch { SoundCloudLikes.toggle(track.url) } }
     }
 
-    var lyrics by remember(item?.videoId) { mutableStateOf<LyricsResult?>(null) }
+    var lyrics by remember(item?.videoId) { mutableStateOf<LyricsState>(LyricsState.Loading) }
     var scrubPosition by remember(item?.videoId) { mutableStateOf<Float?>(null) }
+    // The sheet holds the queue and the lyrics rather than only the queue, so reading them is the
+    // same gesture as opening it. The choice survives a track change, so reading does not restart.
+    var showLyrics by remember { mutableStateOf(false) }
+    val displayTitle by engine.displayTitle.collectAsState()
 
-    LaunchedEffect(item?.videoId, duration) {
-        lyrics = null
-        if (item != null) {
-            lyrics = runCatching { fetchLyrics(item.title, item.artist, duration) }.getOrNull()
+    // Keyed on the metadata actually sent, so a fast track change never ends up fetching the
+    // previous track's title and artist.
+    LaunchedEffect(item?.videoId, displayTitle, item?.artist) {
+        lyrics = LyricsState.Loading
+        val title = displayTitle.ifBlank { item?.title.orEmpty() }
+        if (item == null || title.isBlank()) return@LaunchedEffect
+        // lrclib matches better with a duration; wait up to 5s for it and proceed without
+        // otherwise, rather than refetching every time the duration settles.
+        repeat(25) {
+            if (duration > 0) return@repeat
+            delay(200)
         }
+        lyrics = runCatchingExceptCancellation { fetchLyrics(title, item.artist, duration) }
+            .fold(
+                onSuccess = { found -> found?.let(LyricsState::Loaded) ?: LyricsState.NotFound },
+                onFailure = { LyricsState.Unavailable },
+            )
     }
+
+    // No back handler of its own: the lyrics are inside the sheet now, so the sheet's handler is
+    // the one that answers and a second meaning for the same gesture would only surprise.
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Background)) {
         val density = LocalDensity.current
@@ -185,14 +224,6 @@ fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
         // Back closes the queue sheet before it leaves Now Playing.
         BackHandler(enabled = progress > 0.01f) { settle(4_000f) }
 
-        // Tapping the player bar while already here opens the queue, the same resting state a
-        // drag up would reach. Cleared on use so leaving and returning does not reopen it.
-        LaunchedEffect(showQueue.value) {
-            if (!showQueue.value) return@LaunchedEffect
-            sheet.animateTo(Anchors.last(), spring(stiffness = Spring.StiffnessLow))
-            showQueue.value = false
-        }
-
         val listState = rememberLazyListState()
         LaunchedEffect(expanded, index) {
             if (expanded && index >= 0) listState.scrollToItem(index)
@@ -231,7 +262,7 @@ fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
             PlayerPane(
                 paneHeight = sheetTopDp,
                 item = item,
-                lyrics = lyrics,
+                onOpenLyrics = { showLyrics = true; settle(-4_000f) },
                 onDownload = download,
                 downloadState = item?.let { downloads[it.url] },
                 liked = item?.let { it.url in likedSet } ?: false,
@@ -278,7 +309,10 @@ fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
                 queueSize = queue.size,
                 queueTitle = queueTitle,
                 nextTitle = nextTitle(queue, index, repeatMode),
+                nowPlaying = item?.let { listOf(it.title, it.artist).filter(String::isNotBlank).joinToString(" · ") },
                 shuffle = shuffle,
+                showLyrics = showLyrics,
+                onShowLyrics = { showLyrics = it },
                 onDrag = ::dragBy,
                 onDragStopped = ::settle,
                 onToggle = { settle(if (progress > 0.25f) 4_000f else -4_000f) },
@@ -286,15 +320,27 @@ fun NowPlayingScreen(engine: PlayerEngine, showQueue: MutableState<Boolean>) {
                 onClear = { engine.clearQueue() },
             )
             Divider(color = HairlineSoft)
-            LazyColumn(Modifier.weight(1f), state = listState) {
-                itemsIndexed(queue, key = { i, q -> "$i:${q.source}:${q.videoId}" }) { queueIndex, queueItem ->
-                    TrackRow(
-                        title = queueItem.title.ifBlank { queueItem.videoId },
-                        subtitle = queueItem.subtitleText(),
-                        artworkUrl = artworkFor(queueItem),
-                        highlight = queueIndex == index,
-                        onClick = { engine.jumpTo(queueIndex) },
-                    )
+            if (showLyrics) {
+                LyricsList(
+                    state = lyrics,
+                    position = position,
+                    // Auto-scroll only once the sheet is actually open, so reading does not race a
+                    // list nobody can see yet.
+                    scrolling = expanded,
+                    onSeek = { timeMs -> engine.seek(timeMs / 1000.0) },
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                LazyColumn(Modifier.weight(1f), state = listState) {
+                    itemsIndexed(queue, key = { i, q -> "$i:${q.source}:${q.videoId}" }) { queueIndex, queueItem ->
+                        TrackRow(
+                            title = queueItem.title.ifBlank { queueItem.videoId },
+                            subtitle = queueItem.subtitleText(),
+                            artworkUrl = artworkFor(queueItem),
+                            highlight = queueIndex == index,
+                            onClick = { engine.jumpTo(queueIndex) },
+                        )
+                    }
                 }
             }
         }
@@ -315,7 +361,10 @@ private fun SheetHeader(
     queueSize: Int,
     queueTitle: String?,
     nextTitle: String?,
+    nowPlaying: String?,
     shuffle: Boolean,
+    showLyrics: Boolean,
+    onShowLyrics: (Boolean) -> Unit,
     onDrag: (Float) -> Unit,
     onDragStopped: (Float) -> Unit,
     onToggle: () -> Unit,
@@ -346,16 +395,30 @@ private fun SheetHeader(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
+                if (asQueue) {
+                    // The sheet holds two things now, so the line that only named the queue becomes
+                    // the switch between them.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SheetTab("_queue;", selected = !showLyrics, onClick = { onShowLyrics(false) })
+                        Spacer(Modifier.width(14.dp))
+                        SheetTab("_lyrics;", selected = showLyrics, onClick = { onShowLyrics(true) })
+                    }
+                } else {
+                    Text(
+                        "up next",
+                        color = PsSteel400,
+                        fontFamily = FontMono,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Text(
-                    if (asQueue) "_playing_from;" else "up next",
-                    color = PsSteel400,
-                    fontFamily = FontMono,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    if (asQueue) "${queueTitle ?: "queue"} · $queueSize" else nextTitle ?: "nothing queued",
+                    when {
+                        !asQueue -> nextTitle ?: "nothing queued"
+                        showLyrics -> nowPlaying ?: "nothing playing"
+                        else -> "${queueTitle ?: "queue"} · $queueSize"
+                    },
                     color = TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
@@ -363,7 +426,15 @@ private fun SheetHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (asQueue) {
+            if (!asQueue) {
+                Icon(
+                    Icons.Default.KeyboardArrowUp,
+                    contentDescription = "Show queue",
+                    tint = TextSecondary,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
+            } else if (!showLyrics) {
+                // Queue actions say nothing while reading, so they give the room to the lyrics.
                 IconButton(onClick = onShuffle) {
                     Icon(
                         Icons.Default.Shuffle,
@@ -374,16 +445,23 @@ private fun SheetHeader(
                 IconButton(onClick = onClear) {
                     Icon(Icons.Default.DeleteSweep, contentDescription = "Clear queue", tint = TextSecondary)
                 }
-            } else {
-                Icon(
-                    Icons.Default.KeyboardArrowUp,
-                    contentDescription = "Show queue",
-                    tint = TextSecondary,
-                    modifier = Modifier.padding(end = 12.dp),
-                )
             }
         }
     }
+}
+
+/** One half of the sheet; the label that used to sit here is now the way to change halves. */
+@Composable
+private fun SheetTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) TextPrimary else PsSteel400,
+        fontFamily = FontMono,
+        fontSize = 11.sp,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+    )
 }
 
 /** Thumb, title, artist and play/pause pinned to the top while the queue is open. */
@@ -444,7 +522,7 @@ private fun CompactHeader(
 private fun PlayerPane(
     paneHeight: Dp,
     item: QueueItem?,
-    lyrics: LyricsResult?,
+    onOpenLyrics: () -> Unit,
     onDownload: (() -> Unit)?,
     downloadState: DownloadManager.State?,
     liked: Boolean,
@@ -491,6 +569,7 @@ private fun PlayerPane(
                     LikeButton(liked, onLike, tint = TextPrimary)
                 }
                 if (onDownload != null) DownloadButton(downloadState, onDownload, tint = TextPrimary)
+                LyricsToggle(onOpenLyrics)
             }
             Spacer(Modifier.height(12.dp))
 
@@ -513,8 +592,14 @@ private fun PlayerPane(
             TransportRow(isPlaying, shuffle, repeatMode, engine)
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
 
-        lyrics?.let { result -> LyricsBlock(result, position) }
+/** Opens the sheet straight into the lyrics, for when that is why you reached for the player. */
+@Composable
+private fun LyricsToggle(onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+        Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = TextSecondary)
     }
 }
 
@@ -563,30 +648,130 @@ private fun TransportRow(isPlaying: Boolean, shuffle: Boolean, repeatMode: Repea
     }
 }
 
+/**
+ * The lyrics half of the sheet, in the karaoke shape: the line being sung sits centred and larger,
+ * and the ones around it fade with distance. Synced lines can be tapped to jump there, which is the
+ * reason to read them next to the player rather than instead of it. A manual scroll buys
+ * [USER_SCROLL_GRACE_MS] of quiet so reading ahead does not fight the song.
+ */
 @Composable
-private fun LyricsBlock(result: LyricsResult, position: Double) {
-    Spacer(Modifier.height(16.dp))
-    Text(
-        if (result.synced) "lyrics" else "lyrics (unsynced)",
-        color = PsSteel400,
-        fontFamily = FontMono,
-        fontSize = 11.sp,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-    )
-    val activeIndex = if (result.synced) {
-        result.lines.indexOfLast { it.timeMs <= (position * 1000).toLong() }
-    } else -1
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        result.lines.forEachIndexed { lineIndex, line ->
-            Text(
-                line.text,
-                color = if (lineIndex == activeIndex) PsIrisCyan else TextSecondary,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(vertical = 3.dp),
-            )
+private fun LyricsList(
+    state: LyricsState,
+    position: Double,
+    scrolling: Boolean,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+    val autoScroll = rememberUserAwareAutoScroll(listState)
+
+    // -1 for unsynced lyrics, so nothing is highlighted instead of the first line being wrong.
+    val activeIndex = remember(state, position) {
+        val result = (state as? LyricsState.Loaded)?.result ?: return@remember -1
+        if (!result.synced) return@remember -1
+        result.lines.indexOfLast { it.timeMs <= (position * 1000).toLong() }.coerceAtLeast(0)
+    }
+
+    // Half a viewport of padding top and bottom turns "scroll this item to the top" into "centre
+    // this item", which is the whole shape of a karaoke line: the first and last lines can reach
+    // the middle too.
+    LaunchedEffect(activeIndex, scrolling) {
+        if (scrolling && activeIndex >= 0) autoScroll(activeIndex)
+    }
+
+    Column(modifier) {
+        Text(
+            when (state) {
+                is LyricsState.Loading -> "loading..."
+                is LyricsState.NotFound -> "// no_lyrics;"
+                is LyricsState.Unavailable -> "// lyrics_unavailable;"
+                is LyricsState.Loaded -> if (state.result.synced) "synced;" else "plain_text;"
+            },
+            color = PsSteel400,
+            fontFamily = FontMono,
+            fontSize = 10.sp,
+            letterSpacing = 1.4.sp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+
+        when (state) {
+            is LyricsState.Loading -> LyricsNotice("...")
+            is LyricsState.NotFound -> LyricsNotice("// no_lyrics;")
+            is LyricsState.Unavailable -> LyricsNotice("// lyrics_unavailable;")
+            is LyricsState.Loaded -> BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(vertical = maxHeight / 2),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    itemsIndexed(state.result.lines) { index, line ->
+                        val distance = if (activeIndex < 0) 0 else abs(index - activeIndex)
+                        val isActive = distance == 0
+                        // The neighbours shrink rather than the active line growing: scaling the
+                        // active one up would push a long line past the screen edge, and that is
+                        // the one line you have to be able to read. Scaled through graphicsLayer
+                        // rather than by font size, because a changing text size changes the
+                        // item's height and the list jumps under its own auto-scroll.
+                        val scale by animateFloatAsState(if (isActive) 1f else 0.84f, label = "lyricScale")
+                        Text(
+                            line.text,
+                            fontFamily = FontMono,
+                            fontSize = 17.sp,
+                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                            textAlign = TextAlign.Center,
+                            color = when {
+                                // Unsynced lyrics have no active line, so nothing is dimmed.
+                                activeIndex < 0 -> TextPrimary
+                                isActive -> TextPrimary
+                                distance == 1 -> TextPrimary.copy(alpha = 0.55f)
+                                else -> TextPrimary.copy(alpha = 0.26f)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
+                                // Only synced lines know where they are; a plain line is all timeMs 0.
+                                .clickable(enabled = state.result.synced) { onSeek(line.timeMs) }
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                        )
+                    }
+                }
+            }
         }
     }
-    Spacer(Modifier.height(PeekHeight))
+}
+
+@Composable
+private fun LyricsNotice(text: String) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Text(text, color = TextSecondary, fontFamily = FontMono, fontSize = 13.sp)
+}
+
+@Composable
+private fun rememberUserAwareAutoScroll(listState: LazyListState): suspend (Int) -> Unit {
+    var lastUserScrollAt by remember { mutableStateOf(0L) }
+    var programmatic by remember { mutableStateOf(false) }
+
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collectLatest { scrolling ->
+            if (scrolling && !programmatic) lastUserScrollAt = System.currentTimeMillis()
+        }
+    }
+
+    return remember(listState) {
+        val scrollTo: suspend (Int) -> Unit = { index ->
+            if (System.currentTimeMillis() - lastUserScrollAt > USER_SCROLL_GRACE_MS) {
+                programmatic = true
+                try {
+                    listState.animateScrollToItem(index)
+                } finally {
+                    programmatic = false
+                }
+            }
+        }
+        scrollTo
+    }
 }
 
 private fun nextTitle(

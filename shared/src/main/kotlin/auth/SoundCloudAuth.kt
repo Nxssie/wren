@@ -20,13 +20,16 @@ object SoundCloudAuth {
     val accessToken: String? get() = session?.accessToken
 
     /**
-     * Validate a SoundCloud OAuth token (pasted manually) by fetching the user profile.
-     * Tries api-v2 first (undocumented but used by the web player), then legacy api.
+     * Validate a SoundCloud session by fetching the user profile. Tries api-v2 first
+     * (undocumented but used by the web player), then legacy api.
+     *
+     * [refreshToken] comes from the sign-in page's own cookie, and is what lets the session renew
+     * itself instead of expiring into another sign-in.
      */
-    suspend fun connect(token: String): SoundCloudSession =
-        connect(SoundCloudOAuth.Tokens(accessToken = token, refreshToken = null, expiresAt = null))
+    suspend fun connect(token: String, refreshToken: String? = null, clientId: String? = null): SoundCloudSession =
+        connect(SoundCloudOAuth.Tokens(accessToken = token, refreshToken = refreshToken, expiresAt = null, clientId = clientId))
 
-    /** Store tokens from the native PKCE flow after validating them against /me. */
+    /** Store tokens after validating them against /me. */
     suspend fun connect(tokens: SoundCloudOAuth.Tokens): SoundCloudSession = withContext(Dispatchers.IO) {
         val me = fetchMe(tokens.accessToken)
             ?: throw IllegalArgumentException("Invalid SoundCloud token — could not fetch user profile")
@@ -35,6 +38,7 @@ object SoundCloudAuth {
             accessToken = tokens.accessToken,
             refreshToken = tokens.refreshToken,
             expiresAt = tokens.expiresAt,
+            clientId = tokens.clientId,
             userId = me.id,
             username = me.username,
             avatarUrl = me.avatarUrl,
@@ -47,16 +51,19 @@ object SoundCloudAuth {
     }
 
     /**
-     * Refresh the access token when it is about to expire. Only sessions created by the
-     * PKCE flow carry a refresh token; pasted tokens are left as-is.
+     * Refresh the session because the API refused the access token.
+     *
+     * The sign-in page keeps its session in a cookie and never exposes an expiry, so a refusal is
+     * the only honest signal that it went stale — better than a lifetime we would have to invent.
+     * Returns whether the session now holds a freshly issued token.
      */
-    suspend fun ensureValidToken() = withContext(Dispatchers.IO) {
-        val s = session ?: return@withContext
-        val refresh = s.refreshToken ?: return@withContext
-        val expiresAt = s.expiresAt ?: return@withContext
-        if (System.currentTimeMillis() / 1000 < expiresAt - 60) return@withContext
+    suspend fun refreshNow(): Boolean = withContext(Dispatchers.IO) {
+        val s = session ?: return@withContext false
+        val refresh = s.refreshToken ?: return@withContext false
         runCatching {
-            val refreshed = SoundCloudOAuth.refresh(refresh, api.scClientId())
+            // The id that issued the grant, not the one scraped for api-v2: SoundCloud refuses a
+            // refresh presented by a different client, and the sign-in page is not the same client.
+            val refreshed = SoundCloudOAuth.refresh(refresh, s.clientId)
             val updated = s.copy(
                 accessToken = refreshed.accessToken,
                 refreshToken = refreshed.refreshToken ?: refresh,
@@ -65,7 +72,11 @@ object SoundCloudAuth {
             )
             AuthStore.saveSoundCloud(updated)
             session = updated
-        }.onFailure { Log.e("SoundCloudAuth", "Failed to refresh SoundCloud token", it) }
+            // Deliberately no AuthEvents.notifyChanged(): the account has not changed, only the
+            // token behind it, and that notification re-keys every screen.
+            Log.i("SoundCloudAuth", "refreshed the SoundCloud session")
+            true
+        }.onFailure { Log.e("SoundCloudAuth", "Failed to refresh SoundCloud token", it) }.getOrDefault(false)
     }
 
     fun disconnect() {

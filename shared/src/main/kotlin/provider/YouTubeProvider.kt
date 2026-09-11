@@ -128,11 +128,34 @@ object YouTubeProvider : MusicProvider {
         playlists.getOrLoad(account()) { fetchUserPlaylists() }
 
     override suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> =
-        playlistTracks.getOrLoad("${'$'}{account()}|$playlistId") { fetchPlaylistTracks(playlistId) }
+        playlistTracks.getOrLoad(playlistKey(playlistId)) { fetchPlaylistTracks(playlistId) }
 
     override suspend fun librarySongs(): List<PlaylistTrack> =
         songs.getOrLoad(account()) { fetchLikedSongs() }
 
     override suspend fun libraryArtists(): List<ArtistResult> =
         artists.getOrLoad(account()) { fetchSubscribedChannels() }
+
+    /**
+     * The streaming counterparts of the listings above: one emission per page, so a screen fills
+     * while the rest is still being walked. These have to be overridden — the interface default is
+     * an empty list rather than a fetch, so a provider that does not implement them serves an
+     * empty library and logs nothing while doing it.
+     */
+    override fun librarySongsFlow(): Flow<List<PlaylistTrack>> =
+        pagedFlow(TAG, songs, account()) { cursor -> likedSongsPage(cursor) }
+
+    override fun libraryArtistsFlow(): Flow<List<ArtistResult>> =
+        pagedFlow(TAG, artists, account()) { cursor ->
+            val page = subscriptionsPage(cursor)
+            Page(musicArtists(page.items), page.next)
+        }
+
+    override fun playlistTracksFlow(playlistId: String): Flow<List<PlaylistTrack>> =
+        pagedFlow(TAG, playlistTracks, playlistKey(playlistId)) { cursor ->
+            playlistTracksPage(playlistId, cursor)
+        }
+
+    /** The account belongs in the key: a playlist id alone survives a sign-in to another account. */
+    private fun playlistKey(playlistId: String): String = "${account()}|$playlistId"
 }

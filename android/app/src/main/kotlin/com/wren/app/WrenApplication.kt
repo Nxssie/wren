@@ -6,8 +6,10 @@ import api.Streams
 import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
+import com.wren.app.ui.allowSoundCloudDownloads
 import provider.LibraryWarmup
 import util.AppDirs
+import util.DownloadPreference
 import util.ThemePreference
 import java.io.File
 
@@ -33,6 +35,8 @@ class WrenApplication : Application() {
         // The theme is a user preference, not screen state: without this it flipped back to the
         // default on every cold start and on any activity recreate.
         ThemePreference.load()?.let { globalDark = it }
+        // Saving SoundCloud tracks is off unless it has been asked for; see DownloadPreference.
+        allowSoundCloudDownloads = DownloadPreference.load()
         Streams.resolver = HttpStreamResolver()
         engine = ExoPlayerEngine(this)
         engine.start()

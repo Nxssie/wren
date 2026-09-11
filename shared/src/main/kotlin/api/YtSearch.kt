@@ -6,8 +6,12 @@ import kotlinx.serialization.json.*
 import models.SearchResult
 import models.Source
 import util.Http
+import util.Log
 
 private val ytJson = Json { ignoreUnknownKeys = true }
+
+// See YtMusicSearch: a failed request must not read as an empty result set in the log.
+private const val TAG = "YtSearch"
 
 // YT_API_KEY removed — use ApiKeyManager.youtubeKey instead
 private const val YT_CLIENT_VERSION = "2.20240101.00.00"
@@ -39,11 +43,22 @@ suspend fun searchYouTube(query: String, limit: Int): List<SearchResult> = withC
         headers = ytHeaders,
     )
 
+    if (!response.isSuccessful) {
+        Log.w(TAG, "search returned ${response.code}: ${response.body.excerpt()}")
+        return@withContext emptyList()
+    }
+
     parseYtResults(response.body, limit)
 }
 
+private fun String.excerpt() = take(200).replace('\n', ' ')
+
 private fun parseYtResults(body: String, limit: Int): List<SearchResult> {
-    val root = runCatching { ytJson.parseToJsonElement(body).jsonObject }.getOrNull() ?: return emptyList()
+    val root = runCatching { ytJson.parseToJsonElement(body).jsonObject }.getOrNull()
+    if (root == null) {
+        Log.w(TAG, "unparseable search body: ${body.excerpt()}")
+        return emptyList()
+    }
 
     val sections = root
         .digYt("contents", "twoColumnSearchResultsRenderer", "primaryContents",
