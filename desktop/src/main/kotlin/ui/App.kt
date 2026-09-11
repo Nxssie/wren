@@ -86,6 +86,9 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
     val player = remember { FFmpegPlayer() }
     var showProfileDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(0) }
+    // The player is a screen above the tabs rather than a tab of its own: the desktop bar is all
+    // sliders and transport buttons, so this sidebar entry is the affordance that opens it.
+    var showNowPlaying by remember { mutableStateOf(false) }
     // Browsing is scoped to one platform at a time; the queue/player stay shared.
     var platform by remember { mutableStateOf(Platform.YOUTUBE) }
     val provider = remember(platform) { Providers.of(platform) }
@@ -135,7 +138,9 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
                         platform = platform,
                         onPlatformChange = { platform = it; artistBrowseId = null },
                         selectedTab = selectedTab,
-                        onTabChange = { selectedTab = it; artistBrowseId = null },
+                        onTabChange = { selectedTab = it; artistBrowseId = null; showNowPlaying = false },
+                        nowPlaying = showNowPlaying,
+                        onNowPlaying = { showNowPlaying = !showNowPlaying },
                         onOpenProfile = { showProfileDialog = true }
                     )
                     Box(Modifier.weight(1f).fillMaxHeight()) {
@@ -148,22 +153,23 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
                                 onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                             )
                             // key(platform): each platform keeps its own screen state
-                            selectedTab == 0 -> key(platform) {
+                            showNowPlaying -> NowPlayingScreen(player)
+                            selectedTab == 0 -> key(platform) { HomeScreen(provider, player) }
+                            selectedTab == 1 -> key(platform) {
                                 SearchScreen(
                                     provider = provider,
                                     player = player,
                                     onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                                 )
                             }
-                            selectedTab == 1 -> key(platform) { DiscoverScreen(provider, player) }
-                            selectedTab == 2 -> key(platform) {
+                            selectedTab == 2 -> key(platform) { ExploreScreen(provider, player) }
+                            selectedTab == 3 -> key(platform) {
                                 LibraryScreen(
                                     provider = provider,
                                     player = player,
                                     onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                                 )
                             }
-                            selectedTab == 3 -> NowPlayingScreen(player)
                         }
                     }
                 }
@@ -184,6 +190,8 @@ private fun Sidebar(
     onPlatformChange: (Platform) -> Unit,
     selectedTab: Int,
     onTabChange: (Int) -> Unit,
+    nowPlaying: Boolean,
+    onNowPlaying: () -> Unit,
     onOpenProfile: () -> Unit
 ) {
     Column(
@@ -252,31 +260,40 @@ private fun Sidebar(
         )
 
         NavItem(
-            code = "SCH",
-            label = "search",
-            selected = selectedTab == 0,
+            code = "HOM",
+            label = "home",
+            selected = selectedTab == 0 && !nowPlaying,
             onClick = { onTabChange(0) }
         )
         NavItem(
-            code = if (platform == Platform.YOUTUBE) "RAD" else "DSC",
-            label = "explore",
-            selected = selectedTab == 1,
+            code = "SCH",
+            label = "search",
+            selected = selectedTab == 1 && !nowPlaying,
             onClick = { onTabChange(1) }
+        )
+        NavItem(
+            code = "EXP",
+            label = "explore",
+            selected = selectedTab == 2 && !nowPlaying,
+            onClick = { onTabChange(2) }
         )
         NavItem(
             code = "LIB",
             label = "library",
-            selected = selectedTab == 2,
-            onClick = { onTabChange(2) }
-        )
-        NavItem(
-            code = "NOW",
-            label = "now playing",
-            selected = selectedTab == 3,
+            selected = selectedTab == 3 && !nowPlaying,
             onClick = { onTabChange(3) }
         )
 
         Spacer(Modifier.weight(1f))
+
+        // Below the divider rather than in the list above, because it is not a tab: it opens
+        // the player screen over whichever tab is current.
+        NavItem(
+            code = "NOW",
+            label = "now playing",
+            selected = nowPlaying,
+            onClick = onNowPlaying
+        )
 
         // Theme toggle
         Row(

@@ -6,6 +6,7 @@ import kotlinx.serialization.json.*
 import models.SearchResult
 import models.Shelf
 import models.ShelfCard
+import models.ShelfCardKind
 import models.Source
 import util.Http
 import util.Log
@@ -66,9 +67,15 @@ suspend fun ytMusicHome(): List<Shelf> = withContext(Dispatchers.IO) { shelves("
 
 suspend fun ytMusicExplore(): List<Shelf> = withContext(Dispatchers.IO) { shelves("FEmusic_explore") }
 
+/** A mood or genre page: the same shelf shape as a feed, one level down. */
+suspend fun ytMusicCollectionShelves(collectionId: String): List<Shelf> = withContext(Dispatchers.IO) {
+    val (browseId, params) = splitCardId(collectionId)
+    shelves(browseId, params)
+}
+
 /** The shelves of a browse page, in order, dropping any that turned out to hold nothing. */
-private fun shelves(browseId: String): List<Shelf> {
-    val root = browse(browseId = browseId) ?: return emptyList()
+private fun shelves(browseId: String, params: String? = null): List<Shelf> {
+    val root = browse(browseId = browseId, params = params) ?: return emptyList()
     return parseShelves(root)
 }
 
@@ -104,7 +111,7 @@ internal fun parseShelves(root: JsonObject): List<Shelf> {
  */
 suspend fun ytMusicCollectionTracks(collectionId: String, limit: Int = 500): List<SearchResult> =
     withContext(Dispatchers.IO) {
-        val (browseId, params) = collectionId.split("|", limit = 2).let { it[0] to it.getOrNull(1) }
+        val (browseId, params) = splitCardId(collectionId)
         var root = browse(browseId = browseId, params = params) ?: return@withContext emptyList()
 
         val tracks = mutableListOf<SearchResult>()
@@ -121,6 +128,10 @@ suspend fun ytMusicCollectionTracks(collectionId: String, limit: Int = 500): Lis
         }
         tracks.take(limit)
     }
+
+/** A card id travels as `browseId|params` when the endpoint needs params, and bare otherwise. */
+private fun splitCardId(collectionId: String): Pair<String, String?> =
+    collectionId.split("|", limit = 2).let { it[0] to it.getOrNull(1) }
 
 /** The tracks on one page of a collection; the caller follows the continuation for the rest. */
 internal fun parseCollectionTracks(root: JsonObject): List<SearchResult> =
@@ -155,13 +166,16 @@ private fun card(r: JsonObject): ShelfCard? {
     return ShelfCard(id, title, r.runs("subtitle")?.takeIf { it.isNotBlank() }, artworkUrl)
 }
 
-/** Moods and genres are buttons rather than cards, and carry only a label. */
+/**
+ * Moods and genres are buttons rather than cards, and carry only a label — and they open a page of
+ * playlists, not tracks, which is what [ShelfCardKind.SHELVES] is for.
+ */
 private fun button(r: JsonObject): ShelfCard? {
     val target = r.at("clickCommand", "browseEndpoint") ?: return null
     val id = target.browseTarget() ?: return null
     val title = r.runs("buttonText")?.takeIf { it.isNotBlank() } ?: return null
 
-    return ShelfCard(id, title)
+    return ShelfCard(id, title, kind = ShelfCardKind.SHELVES)
 }
 
 /** A target needs its `params` kept alongside the id, so both travel as one opaque handle. */

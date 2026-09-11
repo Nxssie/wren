@@ -2,6 +2,7 @@ package api
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import models.ShelfCardKind
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -87,12 +88,18 @@ class YtMusicBrowseTest {
     }
 
     @Test
-    fun `a moods button is a card too, with no artwork`() {
+    fun `a moods button opens another feed, so its card says so`() {
         val card = parseShelves(home)[2].cards.single()
 
         assertEquals("FEmusic_moods_and_genres_category|ggMPOg1u", card.id)
         assertEquals("Chill", card.title)
+        assertEquals(ShelfCardKind.SHELVES, card.kind)
         assertNull(card.artworkUrl)
+    }
+
+    @Test
+    fun `an album card opens tracks`() {
+        assertEquals(ShelfCardKind.TRACKS, parseShelves(home)[1].cards.single().kind)
     }
 
     private val playlist = obj(

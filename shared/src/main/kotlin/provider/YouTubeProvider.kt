@@ -13,6 +13,7 @@ import api.subscriptionsPage
 import api.fetchSubscribedChannels
 import api.fetchUserPlaylists
 import api.youtubeRadio
+import api.ytMusicCollectionShelves
 import api.ytMusicCollectionTracks
 import api.ytMusicExplore
 import api.ytMusicHome
@@ -115,6 +116,10 @@ object YouTubeProvider : MusicProvider {
     override suspend fun collectionTracks(collectionId: String): List<SearchResult> =
         if (isCollectionId(collectionId)) ytMusicCollectionTracks(collectionId)
         else youtubeRadio(collectionId)
+
+    /** Mood and genre buttons, which open a page of playlists rather than a track list. */
+    override suspend fun collectionShelves(collectionId: String): List<Shelf> =
+        ytMusicCollectionShelves(collectionId)
 
     private fun isCollectionId(id: String): Boolean =
         id.contains('|') || id.startsWith("VL") || id.startsWith("MPREb") || id.startsWith("FEmusic")

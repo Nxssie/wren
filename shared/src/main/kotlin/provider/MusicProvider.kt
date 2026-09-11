@@ -54,8 +54,11 @@ interface MusicProvider {
     /** Curated, trending and browsable shelves. Empty when unsupported. */
     suspend fun explore(): List<Shelf> = emptyList()
 
-    /** Tracks behind a [ShelfCard] id from this provider's [home] or [explore] shelves. */
+    /** Tracks behind a [ShelfCard] whose kind is [ShelfCardKind.TRACKS]. */
     suspend fun collectionTracks(collectionId: String): List<SearchResult> = emptyList()
+
+    /** Shelves behind a [ShelfCard] whose kind is [ShelfCardKind.SHELVES] — a mood or genre page. */
+    suspend fun collectionShelves(collectionId: String): List<Shelf> = emptyList()
 
     suspend fun playlists(): List<Playlist> = emptyList()
     suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> = emptyList()

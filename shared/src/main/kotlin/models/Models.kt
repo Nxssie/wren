@@ -107,15 +107,22 @@ data class LyricLine(val timeMs: Long, val text: String)
 data class LyricsResult(val lines: List<LyricLine>, val synced: Boolean)
 
 /**
- * A playlist-like card on a feed shelf: a mix, station, album or curated playlist. [id] is the
- * provider's opaque handle for `MusicProvider.collectionTracks` — for YouTube Music a browse id,
- * carrying the `params` the endpoint needs when there is one.
+ * What tapping a [ShelfCard] opens. Most cards are a collection of tracks; a mood or genre page is
+ * a feed of further shelves, which is why the distinction has to travel with the card.
+ */
+enum class ShelfCardKind { TRACKS, SHELVES }
+
+/**
+ * A card on a feed shelf: a mix, station, album, curated playlist, or a door into another feed.
+ * [id] is the provider's opaque handle for `MusicProvider.collectionTracks`/`collectionShelves` —
+ * for YouTube Music a browse id, carrying the `params` the endpoint needs when there is one.
  */
 data class ShelfCard(
     val id: String,
     val title: String,
     val subtitle: String? = null,
-    val artworkUrl: String? = null
+    val artworkUrl: String? = null,
+    val kind: ShelfCardKind = ShelfCardKind.TRACKS
 )
 
 /** One feed shelf. A flat track list, a row of cards, or both — a screen renders what is non-empty. */
