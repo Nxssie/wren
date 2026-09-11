@@ -7,6 +7,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
+ * The default `User-Agent` for callers that set none of their own. OkHttp's default is
+ * `okhttp/<version>`, and some origins answer that with a 520 instead of the content — lrclib
+ * behind Cloudflare does — which reads as "there is nothing here" unless the status is checked.
+ */
+private const val APP_USER_AGENT = "wren (https://github.com/Nxssie/wren)"
+
+/**
  * The single HTTP entry point for shared code. OkHttp is used instead of `java.net.http`
  * because the latter only exists on Android 13+ (API 33) and Wren supports API 26.
  * Calls are blocking on purpose — every caller already runs on an IO dispatcher.
@@ -15,6 +22,13 @@ object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val request = chain.request()
+            // A default, never an override: InnerTube identifies the client by user agent, so
+            // replacing the ones callers set deliberately would change who YouTube thinks asks.
+            if (request.header("User-Agent") != null) chain.proceed(request)
+            else chain.proceed(request.newBuilder().header("User-Agent", APP_USER_AGENT).build())
+        }
         .build()
 
     data class Response(val code: Int, val body: String) {
