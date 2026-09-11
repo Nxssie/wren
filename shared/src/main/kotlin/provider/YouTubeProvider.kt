@@ -13,12 +13,19 @@ import api.subscriptionsPage
 import api.fetchSubscribedChannels
 import api.fetchUserPlaylists
 import api.youtubeRadio
+import api.ytMusicCollectionShelves
+import api.ytMusicCollectionTracks
+import api.ytMusicExplore
+import api.ytMusicHome
 import auth.GoogleAuth
 import models.Source
 import models.ArtistResult
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
+import models.Shelf
+import models.ShelfCard
+import util.Log
 import util.TtlCache
 import kotlinx.coroutines.flow.Flow
 
@@ -50,10 +57,7 @@ object YouTubeProvider : MusicProvider {
     override val supportsStations = true    // per-track radio via the RDAMVM mix
     override val supportsLibrary = true
 
-    // YouTube exposes no discovery feed through the Data API; this tab is Wren's own
-    // construct (radios seeded by local plays), so it is named for what it really is.
-    override val discoverLabel = "radios"
-    override val discoverEmptyHint = "youtube_has_no_discovery_feed — play_something_here_to_seed_radios"
+    override val homeEmptyHint = "youtube_has_no_personalised_feed — play_something_here_to_seed_radios"
 
     override suspend fun search(query: String, limit: Int): List<SearchResult> =
         YoutubeMusic.search(query, limit)
@@ -67,30 +71,58 @@ object YouTubeProvider : MusicProvider {
     }
 
     /**
-     * The Data API has no personalised feed, so Discover is built from what the user
+     * YouTube Music's own `FEmusic_home` feed, followed by Wren's radios seeded by what the user
+     * actually played here. The InnerTube call cannot carry the Google token — it rejects tokens
+     * from clients it does not recognise — so the editorial shelves are geographic rather than
+     * account-personal; the local radios are what keeps Home personal.
+     */
+    override suspend fun home(forceRefresh: Boolean): List<Shelf> {
+        val editorial = runCatching { ytMusicHome() }
+            .onFailure { Log.w(TAG, "FEmusic_home failed", it) }
+            .getOrDefault(emptyList())
+        return editorial + listOfNotNull(radiosFromRecentPlays())
+    }
+
+    override suspend fun explore(): List<Shelf> =
+        runCatching { ytMusicExplore() }
+            .onFailure { Log.w(TAG, "FEmusic_explore failed", it) }
+            .getOrDefault(emptyList())
+
+    /**
+     * The Data API has no personalised feed, so this half of Home is built from what the user
      * actually played here: one radio per recent distinct track, opened on demand.
      */
-    override suspend fun discover(forceRefresh: Boolean): List<DiscoverSection> {
+    private fun radiosFromRecentPlays(): Shelf? {
         val recent = ListeningHistory.recent(40, setOf(Source.YT_MUSIC, Source.YOUTUBE))
             .distinctBy { it.trackId }
             .take(10)
-        if (recent.isEmpty()) return emptyList()
+        if (recent.isEmpty()) return null
         val radios = recent.map {
-            DiscoverCollection(
+            ShelfCard(
                 id = it.trackId,
                 title = it.title,
                 subtitle = it.artist,
                 artworkUrl = it.artworkUrl ?: "https://i.ytimg.com/vi/${it.trackId}/hqdefault.jpg"
             )
         }
-        return listOf(DiscoverSection(
+        return Shelf(
             title = "radios from recent plays",
             caption = "built by wren from your plays here — youtube offers no discovery feed",
-            collections = radios
-        ))
+            cards = radios
+        )
     }
 
-    override suspend fun collectionTracks(collectionId: String): List<SearchResult> = youtubeRadio(collectionId)
+    /** A card from Home or Explore is an album or playlist; anything else is a radio seed. */
+    override suspend fun collectionTracks(collectionId: String): List<SearchResult> =
+        if (isCollectionId(collectionId)) ytMusicCollectionTracks(collectionId)
+        else youtubeRadio(collectionId)
+
+    /** Mood and genre buttons, which open a page of playlists rather than a track list. */
+    override suspend fun collectionShelves(collectionId: String): List<Shelf> =
+        ytMusicCollectionShelves(collectionId)
+
+    private fun isCollectionId(id: String): Boolean =
+        id.contains('|') || id.startsWith("VL") || id.startsWith("MPREb") || id.startsWith("FEmusic")
 
     override suspend fun playlists(): List<Playlist> =
         playlists.getOrLoad(account()) { fetchUserPlaylists() }
