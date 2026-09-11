@@ -157,7 +157,7 @@ are unset:
 
 ```bash
 mise run android:apk          # or: ./gradlew :android:app:assembleRelease
-adb install -r android/app/build/outputs/apk/release/app-release.apk
+adb install -r android/app/build/outputs/apk/release/wren-*.apk
 ```
 
 Variables: `WREN_RELEASE_KEYSTORE_PATH`, `WREN_RELEASE_KEYSTORE_PASSWORD`,
@@ -167,7 +167,9 @@ than an installed build already uses needs an uninstall first.
 
 `versionCode` counts commits and `versionName` is the `git describe` string, so a build
 already installed on a phone can be replaced without uninstalling. Both accept an override in
-`WREN_VERSION_CODE` / `WREN_VERSION_NAME` (what a tagged release would use).
+`WREN_VERSION_CODE` / `WREN_VERSION_NAME` (what a tagged release would use). The APK is named
+from the same string — `wren-0.4.0.apk`, or `wren-<version>-unsigned.apk` when the signing
+variables above are missing.
 
 Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
 and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).

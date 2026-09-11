@@ -41,6 +41,23 @@ val gitDescription: String? = runCatching {
     }.standardOutput.asText.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
 }.getOrNull()
 
+/** What both the APK file and the installed app report; the environment can pin it for a tag. */
+val appVersionName: String = System.getenv("WREN_VERSION_NAME")
+    ?: gitDescription?.removePrefix("v")
+    ?: "1.0.0"
+
+/**
+ * Whether the four release signing variables are present. Both the signing config and the
+ * artifact name depend on it, so an unsigned build is named as one — AGP's own `-unsigned`
+ * marker, kept because an APK that cannot be installed should not look like one that can.
+ */
+val hasReleaseSigning: Boolean = listOf(
+    "WREN_RELEASE_KEYSTORE_PATH",
+    "WREN_RELEASE_KEYSTORE_PASSWORD",
+    "WREN_RELEASE_KEY_ALIAS",
+    "WREN_RELEASE_KEY_PASSWORD",
+).all { !System.getenv(it).isNullOrBlank() }
+
 val gitCommitCount: Int = runCatching {
     providers.exec {
         commandLine("git", "rev-list", "--count", "HEAD")
@@ -58,9 +75,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = System.getenv("WREN_VERSION_CODE")?.toIntOrNull() ?: gitCommitCount
-        versionName = System.getenv("WREN_VERSION_NAME")
-            ?: gitDescription?.removePrefix("v")
-            ?: "1.0.0"
+        versionName = appVersionName
 
         // Bundled Google OAuth client, same env vars CI uses for desktop. Desktop-app
         // clients have no real secret (Google documents this), so baking it in is safe;
@@ -78,15 +93,11 @@ android {
     // unaffected. See the README for the `keytool` line and the variable names.
     signingConfigs {
         create("release") {
-            val store = System.getenv("WREN_RELEASE_KEYSTORE_PATH")
-            val storePassword = System.getenv("WREN_RELEASE_KEYSTORE_PASSWORD")
-            val alias = System.getenv("WREN_RELEASE_KEY_ALIAS")
-            val keyPassword = System.getenv("WREN_RELEASE_KEY_PASSWORD")
-            if (store != null && storePassword != null && alias != null && keyPassword != null) {
-                storeFile = file(store)
-                this.storePassword = storePassword
-                keyAlias = alias
-                this.keyPassword = keyPassword
+            if (hasReleaseSigning) {
+                storeFile = file(System.getenv("WREN_RELEASE_KEYSTORE_PATH"))
+                storePassword = System.getenv("WREN_RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WREN_RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("WREN_RELEASE_KEY_PASSWORD")
             }
         }
     }
@@ -118,6 +129,25 @@ android {
             manifest.srcFile("src/main/AndroidManifest.xml")
             res.srcDirs("src/main/res")
             java.srcDirs("src/main/kotlin")
+        }
+    }
+}
+
+/**
+ * AGP names every artifact `app-release.apk`, which says nothing about which build it is. The
+ * release is handed out as `wren-<versionName>.apk` instead, so the file on a phone names its
+ * own revision and two builds are never confused.
+ */
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val unsigned = if (hasReleaseSigning) "" else "-unsigned"
+        val name = "wren-${appVersionName.replace(Regex("[^A-Za-z0-9._-]"), "-")}$unsigned.apk"
+        variant.outputs.forEach { output ->
+            // Only AGP's impl type exposes the file name; if that ever changes the build keeps
+            // working under AGP's default name rather than failing on an internal API.
+            (output as? com.android.build.api.variant.impl.VariantOutputImpl)
+                ?.outputFileName
+                ?.set(name)
         }
     }
 }
