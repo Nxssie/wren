@@ -4,6 +4,8 @@ import models.ArtistResult
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import models.Source
 
 /** A streaming platform the user can browse. Sessions are per-platform, the queue is shared. */
@@ -77,6 +79,14 @@ interface MusicProvider {
     suspend fun librarySongs(): List<PlaylistTrack> = emptyList()
     /** Artists behind the user's library (follows/subscriptions). Empty when unsupported. */
     suspend fun libraryArtists(): List<ArtistResult> = emptyList()
+
+    /**
+     * The library as it arrives: the cached copy in one emission when it is fresh, otherwise one
+     * emission per page, so the screen fills while the rest is still being walked.
+     */
+    fun librarySongsFlow(): Flow<List<PlaylistTrack>> = flowOf(emptyList())
+    fun libraryArtistsFlow(): Flow<List<ArtistResult>> = flowOf(emptyList())
+    fun playlistTracksFlow(playlistId: String): Flow<List<PlaylistTrack>> = flowOf(emptyList())
 }
 
 object Providers {

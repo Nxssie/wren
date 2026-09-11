@@ -298,7 +298,8 @@ private suspend fun fetchPlaylistCoverFromBrowse(playlistId: String): String? = 
 }
 
 /** The authenticated user's liked videos — the "LL" system playlist, shared by YouTube and YouTube Music. */
-suspend fun fetchLikedSongs(): List<PlaylistTrack> = fetchPlaylistTracks("LL", musicOnly = true)
+suspend fun fetchLikedSongs(): List<PlaylistTrack> =
+    allPages("YtMusic") { likedSongsPage(it) }
 
 /** Channels the authenticated user is subscribed to, shaped as artists for the library screen. */
 /**
@@ -307,8 +308,11 @@ suspend fun fetchLikedSongs(): List<PlaylistTrack> = fetchPlaylistTracks("LL", m
  * API has no artist flag, so each channel is checked against [isMusicArtist] (bounded
  * concurrency: this fans out to one browse call per subscription).
  */
-suspend fun fetchSubscribedChannels(): List<ArtistResult> = coroutineScope {
-    val channels = allPages("YtMusic") { subscriptionsPage(it) }
+suspend fun fetchSubscribedChannels(): List<ArtistResult> =
+    musicArtists(allPages("YtMusic") { subscriptionsPage(it) })
+
+/** Keeps only the subscriptions YouTube Music knows as artists, one bounded browse per channel. */
+suspend fun musicArtists(channels: List<ArtistResult>): List<ArtistResult> = coroutineScope {
     val gate = Semaphore(6)
     channels
         .map { channel -> async { channel.takeIf { gate.withPermit { isMusicArtist(it.browseId) } } } }
@@ -316,6 +320,10 @@ suspend fun fetchSubscribedChannels(): List<ArtistResult> = coroutineScope {
         .filterNotNull()
         .map { it.copy(subtitle = "artist") }
 }
+
+/** Liked videos, one page at a time. */
+suspend fun likedSongsPage(cursor: String? = null): Page<PlaylistTrack> =
+    playlistTracksPage("LL", cursor, musicOnly = true)
 
 /** One page of subscriptions; [fetchSubscribedChannels] walks them all. */
 suspend fun subscriptionsPage(cursor: String? = null): Page<ArtistResult> = withContext(Dispatchers.IO) {

@@ -25,11 +25,25 @@ class TtlCache<K : Any, V : Any>(private val ttlMs: Long, private val maxEntries
         entries[key]?.takeIf { now - it.loadedAt < ttlMs }?.let { return it.value }
 
         val fresh = load()
-        entries[key] = Entry(fresh, System.currentTimeMillis())
+        store(key, fresh)
+        fresh
+    }
+
+    private fun store(key: K, value: V) {
+        entries[key] = Entry(value, System.currentTimeMillis())
         while (entries.size > maxEntries) {
             entries.remove(entries.keys.first())
         }
-        fresh
+    }
+
+    /** The cached value only when it is still fresh, without loading anything. */
+    suspend fun peek(key: K): V? = lock.withLock {
+        entries[key]?.takeIf { System.currentTimeMillis() - it.loadedAt < ttlMs }?.value
+    }
+
+    /** Stores a value built somewhere else, e.g. by a page-by-page walk. */
+    suspend fun put(key: K, value: V) {
+        lock.withLock { store(key, value) }
     }
 
     suspend fun invalidate(key: K) {

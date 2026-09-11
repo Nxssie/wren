@@ -1,10 +1,14 @@
 package provider
 
+import api.Page
 import api.SoundCloud
 import api.SoundCloudDiscovery
+import api.pagedFlow
 import auth.SoundCloudAuth
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
@@ -20,6 +24,8 @@ object SoundCloudProvider : MusicProvider {
 
 /** Long enough to cover switching tabs, short enough that a like made elsewhere shows up. */
 private const val LIBRARY_TTL_MS = 10 * 60 * 1000L
+
+private const val TAG = "SoundCloud"
 
     override val platform = Platform.SOUNDCLOUD
     override val isAuthenticated: Boolean get() = SoundCloudAuth.isAuthenticated
@@ -105,6 +111,28 @@ private const val LIBRARY_TTL_MS = 10 * 60 * 1000L
         val tracks = if (playlistId == LIKES_ID) SoundCloud.userLikes(userId) else SoundCloud.collectionTracks(playlistId)
         return tracks.map { it.toPlaylistTrack() }
     }
+
+    override fun librarySongsFlow(): Flow<List<PlaylistTrack>> =
+        pagedFlow(TAG, songs, account()) { cursor ->
+            val userId = SoundCloudAuth.userId ?: return@pagedFlow Page(emptyList())
+            SoundCloud.userLikesPage(userId, cursor).map { it.toPlaylistTrack() }
+        }
+
+    override fun playlistTracksFlow(playlistId: String): Flow<List<PlaylistTrack>> {
+        if (playlistId != LIKES_ID) {
+            // A collection arrives in one payload — its stubs are hydrated together — so there is
+            // nothing to stream mid-way; it still goes through the cache.
+            return flow {
+                emit(playlistTracks.getOrLoad(playlistKey(playlistId)) { fetchPlaylistTracks(playlistId) })
+            }
+        }
+        return pagedFlow(TAG, playlistTracks, playlistKey(playlistId)) { cursor ->
+            val userId = SoundCloudAuth.userId ?: return@pagedFlow Page(emptyList())
+            SoundCloud.userLikesPage(userId, cursor).map { it.toPlaylistTrack() }
+        }
+    }
+
+    private fun playlistKey(playlistId: String): String = "${account()}|$playlistId"
 
     override suspend fun librarySongs(): List<PlaylistTrack> =
         songs.getOrLoad(account()) { SoundCloud.userLikes(SoundCloudAuth.userId ?: return@getOrLoad emptyList()).map { it.toPlaylistTrack() } }

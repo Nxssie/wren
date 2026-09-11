@@ -10,7 +10,9 @@ import util.runCatchingExceptCancellation
  * SoundCloud a `next_href` URL, and neither means anything to the caller, so the cursor is opaque
  * and travels back unread.
  */
-data class Page<T>(val items: List<T>, val next: String? = null)
+data class Page<T>(val items: List<T>, val next: String? = null) {
+    fun <R> map(transform: (T) -> R): Page<R> = Page(items.map(transform), next)
+}
 
 /**
  * Walks every page of a listing. A page that fails is fatal when nothing has arrived yet — an
