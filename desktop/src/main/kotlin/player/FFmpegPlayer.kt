@@ -104,14 +104,18 @@ class FFmpegPlayer {
     }
 
     fun loadQueue(items: List<QueueItem>, startIndex: Int = 0) {
-        val shuffled = if (shuffle.value && items.size > 1) {
-            items.shuffled()
+        val selected = items[startIndex]
+        // The tapped track is absolute: shuffle only the tracks around it.
+        val ordered = if (shuffle.value && items.size > 1) {
+            val rest = items.filterIndexed { index, _ -> index != startIndex }.shuffled().toMutableList()
+            rest.add(startIndex, selected)
+            rest
         } else {
             items
         }
-        queue.value = shuffled
+        queue.value = ordered
         queueIndex.value = startIndex
-        val item = shuffled[startIndex]
+        val item = ordered[startIndex]
         isEnqueuing.value = true
         // Pre-resolve stream URL in background so playback starts instantly
         scope.launch {
@@ -119,7 +123,7 @@ class FFmpegPlayer {
             isEnqueuing.value = false
             loadInternal(item, resolvedUrl)
         }
-        prefetchAt(shuffled, startIndex + 1, count = 4)
+        prefetchAt(ordered, startIndex + 1, count = 4)
     }
 
     /** Play the track at [index] of the *current* queue, preserving its order (unlike [loadQueue]). */

@@ -214,10 +214,19 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     override fun loadQueue(items: List<QueueItem>, startIndex: Int, title: String?) {
         if (items.isEmpty()) return
-        val ordered = if (_shuffle.value && items.size > 1) items.shuffled() else items
+        val start = startIndex.coerceIn(0, items.lastIndex)
+        val selected = items[start]
+        // The tapped track is absolute: shuffle only the tracks around it.
+        val ordered = if (_shuffle.value && items.size > 1) {
+            val rest = items.filterIndexed { index, _ -> index != start }.shuffled().toMutableList()
+            rest.add(start, selected)
+            rest
+        } else {
+            items
+        }
         _queue.value = ordered
         _queueTitle.value = title?.takeIf { it.isNotBlank() }
-        _queueIndex.value = startIndex.coerceIn(0, ordered.lastIndex)
+        _queueIndex.value = start
         resumePositionSec = null
         playIndex(_queueIndex.value)
         WrenPlaybackService.start(context)
