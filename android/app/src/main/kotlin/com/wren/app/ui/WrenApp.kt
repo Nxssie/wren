@@ -51,8 +51,12 @@ private enum class WrenTab(val code: String, val icon: ImageVector) {
     val browsesPlatform: Boolean get() = this != NOW_PLAYING
 }
 
+/**
+ * @param openNowPlaying requested by a tap on the media widget; consumed here and cleared, so
+ *   a later tap raises it again (see MainActivity).
+ */
 @Composable
-fun WrenApp(engine: PlayerEngine) {
+fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     var tab by remember { mutableStateOf(WrenTab.SEARCH) }
     // Tabs visited so far, so the system back gesture retraces steps instead of quitting.
     val tabHistory = remember { mutableStateListOf<WrenTab>() }
@@ -72,6 +76,15 @@ fun WrenApp(engine: PlayerEngine) {
 
     // Likes follow the SoundCloud session: load on start, reload/clear on sign in/out.
     LaunchedEffect(authVersion) { SoundCloudLikes.refresh() }
+
+    // A tap on the widget means "show me what is playing". At a cold start there is nothing to
+    // go back to, so it becomes the entry tab; otherwise it is pushed, so back returns to
+    // whatever the user was doing.
+    LaunchedEffect(openNowPlaying.value) {
+        if (!openNowPlaying.value) return@LaunchedEffect
+        if (tabHistory.isEmpty()) tab = WrenTab.NOW_PLAYING else navigate(WrenTab.NOW_PLAYING)
+        openNowPlaying.value = false
+    }
 
     // Outermost back handler: screens register their own (collapse sheet, leave playlist,
     // close login) and win while enabled; this one only runs once those are exhausted.

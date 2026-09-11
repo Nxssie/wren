@@ -190,10 +190,11 @@ class WrenPlaybackService : Service() {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
+    /** The widget's body and the session card both land on Now Playing, not on the home tab. */
     private fun contentPendingIntent(): PendingIntent = PendingIntent.getActivity(
         this,
         0,
-        Intent(this, MainActivity::class.java),
+        Intent(this, MainActivity::class.java).setAction(MainActivity.ACTION_NOW_PLAYING),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
