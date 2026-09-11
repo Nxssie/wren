@@ -142,6 +142,28 @@ queue, discover and lyrics.
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release builds are signed locally — no CI involved. Create the keystore once and keep it safe:
+it is the only thing that can update an installed app in place.
+
+```bash
+keytool -genkeypair -v -keystore ~/.android/keys/wren-release.jks -storetype PKCS12 \
+  -alias wren -keyalg RSA -keysize 4096 -validity 10000 \
+  -storepass "$WREN_KEYSTORE_PASSWORD" -keypass "$WREN_KEYSTORE_PASSWORD" -dname "CN=wren"
+```
+
+Then build it (the four variables come from the environment, never from the repo — see the
+secrets note in `AGENTS.md`). With them unset the release task still succeeds and produces an
+unsigned APK:
+
+```bash
+./gradlew :android:app:assembleRelease
+adb install -r android/app/build/outputs/apk/release/app-release.apk
+```
+
+Note: PKCS12 keystores use one password for the store and the key, so `WREN_KEY_PASSWORD` and
+`WREN_KEYSTORE_PASSWORD` hold the same value. Signing with a different key than an installed
+build already uses needs an uninstall first.
+
 Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
 and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).
 

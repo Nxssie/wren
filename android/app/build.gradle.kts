@@ -47,6 +47,24 @@ android {
         buildConfig = true
     }
 
+    // Local release signing: credentials come from the environment (never the repo), and the
+    // config is simply absent when they are not set, so debug builds and other machines are
+    // unaffected. See the README for the `keytool` line and the variable names.
+    signingConfigs {
+        create("release") {
+            val store = System.getenv("WREN_KEYSTORE")
+            val storePassword = System.getenv("WREN_KEYSTORE_PASSWORD")
+            val alias = System.getenv("WREN_KEY_ALIAS")
+            val keyPassword = System.getenv("WREN_KEY_PASSWORD")
+            if (store != null && storePassword != null && alias != null && keyPassword != null) {
+                storeFile = file(store)
+                this.storePassword = storePassword
+                keyAlias = alias
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -54,6 +72,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Unset variables leave the release build unsigned instead of failing the build.
+            signingConfigs.findByName("release")?.takeIf { it.storeFile?.exists() == true }
+                ?.let { signingConfig = it }
         }
     }
 
