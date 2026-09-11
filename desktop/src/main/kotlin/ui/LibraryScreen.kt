@@ -24,6 +24,9 @@ import models.Playlist
 import models.PlaylistTrack
 import api.resolveStreamUrl
 import provider.MusicProvider
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import player.FFmpegPlayer
 import models.toQueueItem
@@ -63,6 +66,7 @@ fun LibraryScreen(
     var artistsError by remember { mutableStateOf<String?>(null) }
     var tracksError by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableStateOf(0) }
+    var tracksJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
 
     if (!provider.supportsLibrary) {
@@ -81,11 +85,17 @@ fun LibraryScreen(
     LaunchedEffect(tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.librarySongs() }
-            songs = result.getOrNull()
-            songsError = result.exceptionOrNull()?.connectMessage()
-            loading = false
-            songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
+            var prefetched = false
+            provider.librarySongsFlow()
+                .catch { failure -> songsError = failure.connectMessage(); loading = false }
+                .collect { page ->
+                    songs = page
+                    loading = false
+                    if (!prefetched) {
+                        prefetched = true
+                        page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
+                }
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
@@ -96,21 +106,27 @@ fun LibraryScreen(
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.libraryArtists() }
-            artists = result.getOrNull()
-            artistsError = result.exceptionOrNull()?.connectMessage()
-            loading = false
+            provider.libraryArtistsFlow()
+                .catch { failure -> artistsError = failure.connectMessage(); loading = false }
+                .collect { page -> artists = page; loading = false }
         }
     }
 
     fun loadPlaylistTracks(playlist: Playlist) {
-        scope.launch {
+        tracksJob?.cancel()
+        tracksJob = scope.launch {
             loading = true
-            val result = runCatchingExceptCancellation { provider.playlistTracks(playlist.id) }
-            tracks = result.getOrNull().orEmpty()
-            tracksError = result.exceptionOrNull()?.connectMessage()
-            loading = false
-            tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+            var prefetched = false
+            provider.playlistTracksFlow(playlist.id)
+                .catch { failure -> tracksError = failure.connectMessage(); loading = false }
+                .collect { page ->
+                    tracks = page
+                    loading = false
+                    if (!prefetched) {
+                        prefetched = true
+                        page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
+                }
         }
     }
 

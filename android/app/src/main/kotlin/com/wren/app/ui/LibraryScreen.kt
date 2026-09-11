@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
 import api.resolveStreamUrl
 import provider.Platform
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import models.ArtistResult
 import models.Playlist
@@ -68,6 +71,7 @@ fun LibraryScreen(
     var artistsError by remember(provider) { mutableStateOf<String?>(null) }
     var tracksError by remember(provider) { mutableStateOf<String?>(null) }
     var retry by remember(provider) { mutableStateOf(0) }
+    var tracksJob by remember(provider) { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
 
     val queue by engine.queue.collectAsState()
@@ -91,11 +95,18 @@ fun LibraryScreen(
     LaunchedEffect(provider, tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.librarySongs() }
-            songs = result.getOrNull()
-            songsError = result.exceptionOrNull()?.connectMessage()
-            loading = false
-            songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
+            var prefetched = false
+            provider.librarySongsFlow()
+                .catch { failure -> songsError = failure.connectMessage(); loading = false }
+                .collect { page ->
+                    songs = page
+                    loading = false
+                    // Streaming URLs for what is on screen, once: later pages keep their own.
+                    if (!prefetched) {
+                        prefetched = true
+                        page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
+                }
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
@@ -106,20 +117,19 @@ fun LibraryScreen(
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.libraryArtists() }
-            artists = result.getOrNull()
-            artistsError = result.exceptionOrNull()?.connectMessage()
-            loading = false
+            provider.libraryArtistsFlow()
+                .catch { failure -> artistsError = failure.connectMessage(); loading = false }
+                .collect { page -> artists = page; loading = false }
         }
     }
 
     fun loadPlaylistTracks(playlist: Playlist) {
-        scope.launch {
+        tracksJob?.cancel()
+        tracksJob = scope.launch {
             loading = true
-            val result = runCatchingExceptCancellation { provider.playlistTracks(playlist.id) }
-            tracks = result.getOrNull().orEmpty()
-            tracksError = result.exceptionOrNull()?.connectMessage()
-            loading = false
+            provider.playlistTracksFlow(playlist.id)
+                .catch { failure -> tracksError = failure.connectMessage(); loading = false }
+                .collect { page -> tracks = page; loading = false }
         }
     }
 
