@@ -54,6 +54,16 @@ class AuthStoreTest {
     }
 
     @Test
+    fun `should keep the bot-protection cookie with the soundcloud session`() = withTempConfig {
+        AuthStore.saveSoundCloud(SoundCloudSession("sc_tok", userId = 42, dataDomeCookie = "verdict~123"))
+        assertEquals("verdict~123", AuthStore.soundcloudSession()!!.dataDomeCookie)
+
+        // A session written before the cookie existed loads with none rather than failing.
+        AuthStore.saveSoundCloud(SoundCloudSession("sc_tok", userId = 42))
+        assertNull(AuthStore.soundcloudSession()!!.dataDomeCookie)
+    }
+
+    @Test
     fun `should disconnect google`() = withTempConfig {
         AuthStore.saveGoogle(GoogleSession("tok", "ref", 1000))
         AuthStore.disconnectGoogle()

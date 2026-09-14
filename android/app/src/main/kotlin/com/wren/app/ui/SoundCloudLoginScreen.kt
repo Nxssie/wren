@@ -60,7 +60,7 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
         scope.launch {
             // Validation is the same call the pasted-token path uses, so a session that does not
             // work is rejected here rather than stored and discovered later.
-            runCatching { SoundCloudAuth.connect(session.accessToken, session.refreshToken, session.clientId) }
+            runCatching { SoundCloudAuth.connect(session.accessToken, session.refreshToken, session.clientId, session.dataDomeCookie) }
                 .onSuccess { onDone() }
                 .onFailure {
                     Log.w(TAG, "the session from the page was refused", it)
@@ -162,18 +162,20 @@ private fun SoundCloudWebView(
             // actually used, which is m.soundcloud.com rather than soundcloud.com.
             val jars = listOf("https://soundcloud.com", "https://m.soundcloud.com")
                 .map { CookieManager.getInstance().getCookie(it) }
-            fun cookie(name: String) = jars.firstNotNullOfOrNull { SoundCloudWebSignIn.tokenFromCookies(it, name) }
+            fun cookie(name: String) = SoundCloudWebSignIn.cookieFromJars(jars, name)
 
             val access = holder.main.storedToken() ?: cookie(SoundCloudWebSignIn.TOKEN_KEY)
             if (access != null) {
                 val refresh = cookie(SoundCloudWebSignIn.REFRESH_TOKEN_KEY)
+                val dataDome = cookie(SoundCloudWebSignIn.DATA_DOME_KEY)
                 Log.i(
                     TAG,
                     "session found (access ${access.length} chars, refresh " +
                         "${if (refresh == null) "absent" else "${refresh.length} chars"}, " +
-                        "client ${holder.authClientId ?: "unknown"})"
+                        "client ${holder.authClientId ?: "unknown"}, " +
+                        "datadome ${if (dataDome == null) "absent" else "present"})"
                 )
-                deliver(SoundCloudWebSignIn.Session(access, refresh, holder.authClientId))
+                deliver(SoundCloudWebSignIn.Session(access, refresh, holder.authClientId, dataDome))
                 return@LaunchedEffect
             }
         }

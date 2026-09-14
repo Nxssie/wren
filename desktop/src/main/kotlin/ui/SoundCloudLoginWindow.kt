@@ -170,13 +170,15 @@ object SoundCloudLoginWindow {
             val access = readScript(engine) ?: cookie(SoundCloudWebSignIn.TOKEN_KEY)
             if (access != null) {
                 val refresh = cookie(SoundCloudWebSignIn.REFRESH_TOKEN_KEY)
+                val dataDome = cookie(SoundCloudWebSignIn.DATA_DOME_KEY)
                 Log.i(
                     TAG,
                     "session found (access ${access.length} chars, refresh " +
                         "${if (refresh == null) "absent" else "${refresh.length} chars"}, " +
-                        "client ${authClientId ?: "unknown"})"
+                        "client ${authClientId ?: "unknown"}, " +
+                        "datadome ${if (dataDome == null) "absent" else "present"})"
                 )
-                deferred.complete(SoundCloudWebSignIn.Session(access, refresh, authClientId))
+                deferred.complete(SoundCloudWebSignIn.Session(access, refresh, authClientId, dataDome))
                 return
             }
         }

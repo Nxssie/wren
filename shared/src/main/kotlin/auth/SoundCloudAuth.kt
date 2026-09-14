@@ -18,6 +18,8 @@ object SoundCloudAuth {
     val avatarUrl: String? get() = session?.avatarUrl
     val userId: Long? get() = session?.userId
     val accessToken: String? get() = session?.accessToken
+    /** The client the session was issued to; writes must name the same one the token belongs to. */
+    val clientId: String? get() = session?.clientId
 
     /**
      * Validate a SoundCloud session by fetching the user profile. Tries api-v2 first
@@ -26,11 +28,11 @@ object SoundCloudAuth {
      * [refreshToken] comes from the sign-in page's own cookie, and is what lets the session renew
      * itself instead of expiring into another sign-in.
      */
-    suspend fun connect(token: String, refreshToken: String? = null, clientId: String? = null): SoundCloudSession =
-        connect(SoundCloudOAuth.Tokens(accessToken = token, refreshToken = refreshToken, expiresAt = null, clientId = clientId))
+    suspend fun connect(token: String, refreshToken: String? = null, clientId: String? = null, dataDomeCookie: String? = null): SoundCloudSession =
+        connect(SoundCloudOAuth.Tokens(accessToken = token, refreshToken = refreshToken, expiresAt = null, clientId = clientId), dataDomeCookie)
 
     /** Store tokens after validating them against /me. */
-    suspend fun connect(tokens: SoundCloudOAuth.Tokens): SoundCloudSession = withContext(Dispatchers.IO) {
+    suspend fun connect(tokens: SoundCloudOAuth.Tokens, dataDomeCookie: String? = null): SoundCloudSession = withContext(Dispatchers.IO) {
         val me = fetchMe(tokens.accessToken)
             ?: throw IllegalArgumentException("Invalid SoundCloud token — could not fetch user profile")
 
@@ -42,7 +44,8 @@ object SoundCloudAuth {
             userId = me.id,
             username = me.username,
             avatarUrl = me.avatarUrl,
-            permalink = me.permalink
+            permalink = me.permalink,
+            dataDomeCookie = dataDomeCookie
         )
         AuthStore.saveSoundCloud(scSession)
         session = scSession
@@ -83,6 +86,15 @@ object SoundCloudAuth {
         session = null
         AuthStore.disconnectSoundCloud()
         AuthEvents.notifyChanged()
+    }
+
+    /** Bot-protection verdict currently on file, to be attached to authenticated writes. */
+    val dataDomeCookie: String? get() = session?.dataDomeCookie
+
+    fun updateDataDomeCookie(value: String?) {
+        val s = session ?: return
+        session = s.copy(dataDomeCookie = value)
+        AuthStore.saveSoundCloud(session!!)
     }
 
     // ── /me fetch (internal for testing) ─────────────────────────────────────

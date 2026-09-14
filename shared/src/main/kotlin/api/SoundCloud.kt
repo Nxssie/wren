@@ -3,6 +3,7 @@ package api
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import auth.SoundCloudAuth
+import auth.SoundCloudWebSignIn
 import kotlinx.serialization.json.*
 import models.Playlist
 import models.SearchResult
@@ -16,6 +17,10 @@ import java.net.URLEncoder
 private val scJson = Json { ignoreUnknownKeys = true }
 private const val SC_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+/** DataDome refuses writes presented by the Chromium UA; a Firefox one goes through. */
+private const val SC_LIKE_USER_AGENT =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0"
 private const val SC_SEARCH_PARAMS = "Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo="
 
 // ── Client ID management ──────────────────────────────────────────────────────
@@ -309,26 +314,102 @@ object SoundCloud {
     /** Like or unlike [trackId] for the signed-in user. False when there is no session or the call failed. */
     suspend fun setLiked(trackId: Long, liked: Boolean): Boolean = withContext(Dispatchers.IO) {
         val userId = SoundCloudAuth.userId ?: return@withContext false
-        val clientId = scClientId()
+        val method = if (liked) "PUT" else "DELETE"
+        // The web player pairs its token with the client that issued it; a token presented under
+        // the scraped id of another client is one more thing that marks the request as not it.
+        val clientId = SoundCloudAuth.clientId ?: scClientId()
+        val url = "$SC_BASE/users/$userId/track_likes/$trackId?client_id=$clientId"
 
-        suspend fun attempt(): Http.Response? = runCatching {
-            Http.request(
-                method = if (liked) "PUT" else "DELETE",
-                url = "$SC_BASE/users/$userId/track_likes/$trackId?client_id=$clientId",
-                headers = mapOf(
-                    "User-Agent" to SC_USER_AGENT,
-                    "Authorization" to "OAuth ${SoundCloudAuth.accessToken.orEmpty()}",
-                ),
-            )
+        fun headers(): Map<String, String> = mutableMapOf(
+            // Writes are guarded by DataDome, which flags the Chromium UA every other request
+            // uses as automated — a Firefox one passes more often. Verified empirically.
+            "User-Agent" to SC_LIKE_USER_AGENT,
+            "Authorization" to "OAuth ${SoundCloudAuth.accessToken.orEmpty()}",
+        ).also {
+            SoundCloudAuth.dataDomeCookie?.takeIf(String::isNotBlank)
+                ?.let { value -> it["Cookie"] = "${SoundCloudWebSignIn.DATA_DOME_KEY}=$value" }
+        }
+
+        fun attempt(): Http.Response? = runCatching {
+            Http.request(method = method, url = url, headers = headers())
         }.onFailure { Log.e("SoundCloud", "like request failed for $trackId", it) }.getOrNull()
 
         var resp = attempt()
         // Same as any other call: a refusal is how the session says its token went stale.
         if (resp != null && resp.code in 401..403 && SoundCloudAuth.refreshNow()) resp = attempt()
 
+        // A 403 here is the bot protection, not a refusal of the like itself, and the platform
+        // shell can repeat the write from a real page — same cookies, same engine — which is what
+        // satisfies it. The verdict cookie that earns is kept for the next attempt.
+        val fallback = webWriteFallback
+        if (resp != null && resp.code == 403 && fallback != null) {
+            Log.i("SoundCloud", "like $method refused by the bot protection; retrying in the browser")
+            val outcome = fallback(method, url, SoundCloudAuth.accessToken.orEmpty())
+            SoundCloudAuth.updateDataDomeCookie(outcome?.dataDomeCookie)
+            if (outcome != null && outcome.status in 200..299) {
+                Log.i("SoundCloud", "browser fallback for $method $trackId -> ${outcome.status}")
+                return@withContext true
+            }
+            Log.w("SoundCloud", "browser fallback for $method $trackId -> ${outcome?.status ?: "no response"}")
+        }
+
+        // Past that point the refusal names a captcha, and only a person can clear it. The shell
+        // shows it; the verdict cookie the answer earns is what the write is repeated with.
+        val solver = challengeSolver
+        val challengeUrl = resp?.takeIf { it.code == 403 }?.let { dataDomeChallengeUrl(it.body) }
+        if (challengeUrl != null && isDataDomeBlock(challengeUrl)) {
+            // Not a puzzle but a verdict: the device or network is blocked for a while, and the
+            // page would only say so. Nothing to show; the heart rolls back.
+            Log.w("SoundCloud", "like $method $trackId: the bot protection has blocked this device for now ($challengeUrl)")
+        } else if (challengeUrl != null && solver != null) {
+            Log.i("SoundCloud", "like $method $trackId needs a captcha; asking the user ($challengeUrl)")
+            val cookie = solver(challengeUrl)
+            if (cookie == null) {
+                Log.i("SoundCloud", "captcha for $method $trackId was dismissed")
+            } else {
+                SoundCloudAuth.updateDataDomeCookie(cookie)
+                resp = attempt()
+                Log.i("SoundCloud", "like $method $trackId after the captcha -> ${resp?.code ?: "no response"}")
+            }
+        }
+
         val ok = resp != null && resp.code in 200..299
-        if (!ok) Log.w("SoundCloud", "like ${if (liked) "PUT" else "DELETE"} $trackId -> ${resp?.code}")
+        if (!ok) Log.w("SoundCloud", "like $method $trackId -> " + (resp?.let { "${it.code} ${it.body.take(120)}" } ?: "no response"))
         ok
+    }
+
+    /**
+     * Set by the platform shell when a real browser can perform the write (Android runs it in a
+     * hidden WebView). SoundCloud guards these endpoints with DataDome, and when it turns our
+     * request down, one issued from a page of its own is the only shape it accepts.
+     */
+    var webWriteFallback: (suspend (method: String, url: String, token: String) -> WebWriteOutcome?)? = null
+
+    /** What the browser made of a write: the status, and the verdict cookie it left behind. */
+    data class WebWriteOutcome(val status: Int, val dataDomeCookie: String? = null)
+
+    /**
+     * Set by the platform shell when it can put a captcha in front of the user. Given the
+     * challenge page's URL, it answers with the verdict cookie the solved captcha issued, or
+     * null when the user gave up on it.
+     */
+    var challengeSolver: (suspend (challengeUrl: String) -> String?)? = null
+
+    /**
+     * The URL of the captcha a refused write points at, or null when the refusal is something
+     * else. DataDome answers `{"url":"https://geo.captcha-delivery.com/captcha/?initialCid=..."}`.
+     */
+    /** DataDome marks the page it points at: `t=fe` is a captcha to solve, `t=bv` a plain block. */
+    internal fun isDataDomeBlock(challengeUrl: String): Boolean =
+        challengeUrl.substringAfter('?', "").split('&').any { it == "t=bv" }
+
+    internal fun dataDomeChallengeUrl(body: String): String? {
+        val key = "\"url\":\""
+        val start = body.indexOf(key)
+        if (start < 0) return null
+        return body.substring(start + key.length).substringBefore('"')
+            .replace("\\/", "/")
+            .takeIf { it.startsWith("https://") && it.contains("captcha-delivery.com") }
     }
 
     // ── Internals ────────────────────────────────────────────────────────────

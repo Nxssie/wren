@@ -48,7 +48,9 @@ data class SoundCloudSession(
     val userId: Long? = null,
     val username: String? = null,
     val avatarUrl: String? = null,
-    val permalink: String? = null
+    val permalink: String? = null,
+    /** DataDome's own cookie, minted by the sign-in page. Writes refuse requests without it. */
+    val dataDomeCookie: String? = null
 )
 
 // ── Store ────────────────────────────────────────────────────────────────────

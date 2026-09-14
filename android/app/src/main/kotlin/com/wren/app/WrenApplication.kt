@@ -2,12 +2,19 @@ package com.wren.app
 
 import android.app.Application
 import api.HttpStreamResolver
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
+import api.SoundCloud
+import api.SoundCloudLikes
 import api.Streams
 import api.loadProtectedStreams
 import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
 import com.wren.app.ui.allowSoundCloudDownloads
+import com.wren.app.util.DataDomeChallenge
+import com.wren.app.util.WebWrite
 import com.wren.app.widget.WrenWidgetUpdater
 import provider.LibraryWarmup
 import util.AppDirs
@@ -42,6 +49,21 @@ class WrenApplication : Application() {
         // Saving SoundCloud tracks is off unless it has been asked for; see DownloadPreference.
         allowSoundCloudDownloads = DownloadPreference.load()
         Streams.resolver = HttpStreamResolver()
+        // SoundCloud guards its write endpoints with DataDome, which turns down requests that do
+        // not look like the web player's; this repeats them from a real page when that happens.
+        SoundCloud.webWriteFallback = { method, url, token -> WebWrite.perform(this, method, url, token) }
+        // When even that is refused with a captcha, only a person can clear it.
+        SoundCloud.challengeSolver = { url -> DataDomeChallenge.solve(this, url) }
+        // The heart rolls back by itself; this is what says why it did.
+        SoundCloudLikes.onRefused = { liked ->
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(
+                    this,
+                    if (liked) "SoundCloud refused the like" else "SoundCloud refused removing the like",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
         engine = ExoPlayerEngine(this)
         engine.start()
         // Repaints the home-screen widget from the engine's state; starts with no widget placed too,
