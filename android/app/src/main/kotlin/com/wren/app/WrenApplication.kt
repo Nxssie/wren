@@ -3,6 +3,7 @@ package com.wren.app
 import android.app.Application
 import api.HttpStreamResolver
 import api.Streams
+import api.loadProtectedStreams
 import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
@@ -31,6 +32,8 @@ class WrenApplication : Application() {
             configDir = File(filesDir, "config"),
             stateDir = File(filesDir, "state"),
         )
+        // Before any listing is parsed, so protected tracks are locked from the first list.
+        loadProtectedStreams()
         OAuthConfig.clientId = BuildConfig.WREN_GOOGLE_CLIENT_ID
         OAuthConfig.clientSecret = BuildConfig.WREN_GOOGLE_CLIENT_SECRET
         // The theme is a user preference, not screen state: without this it flipped back to the

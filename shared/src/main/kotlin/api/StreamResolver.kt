@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 
 /**
  * The platform serves this track only behind content protection (SoundCloud's encrypted HLS on
@@ -64,9 +65,18 @@ val protectedStreams: StateFlow<Set<String>> = _protectedStreams.asStateFlow()
 /** Whether the last resolve found [trackKey] to be served only behind content protection. */
 fun isProtectedStream(trackKey: String): Boolean = trackKey in _protectedStreams.value
 
+/** Reads the persisted set; call once after [util.AppDirs] is initialised, before any listing loads. */
+fun loadProtectedStreams() {
+    val stored = ProtectedStreamStore.load()
+    if (stored.isNotEmpty()) _protectedStreams.update { it + stored }
+}
+
 /** Records [trackKey] as protected; called by the resolver and by parsers that can see the renditions. */
 fun markProtectedStream(trackKey: String) {
-    _protectedStreams.update { it + trackKey }
+    if (trackKey in _protectedStreams.value) return
+    val updated = _protectedStreams.updateAndGet { it + trackKey }
+    // Off the caller's thread: parsers run wherever the listing was fetched, sometimes on the UI.
+    Thread { ProtectedStreamStore.save(updated) }.also { it.isDaemon = true }.start()
 }
 
 /**

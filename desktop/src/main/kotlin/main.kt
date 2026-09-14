@@ -14,6 +14,7 @@ fun main() {
         configDir = File(System.getProperty("user.home"), ".config/wren"),
         stateDir = File(System.getProperty("user.home"), ".local/state/wren"),
     )
+    api.loadProtectedStreams()
     // Before the first window exists, so the choice applies to the first frame (no flash).
     ThemePreference.load()?.let { ui.globalDark = it }
     // Same reasoning as the app: the library is a long walk, so warm it while the window opens.
