@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared by the widget's card and by the artwork, which rounds its own left corners to match. -->
+    <dimen name="wren_widget_radius">24dp</dimen>
+</resources>

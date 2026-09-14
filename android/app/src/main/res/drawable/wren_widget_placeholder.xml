@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the left corners: this is what sits behind the artwork, flush against the card's edge. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/wren_widget_placeholder" />
+    <corners
+        android:topLeftRadius="@dimen/wren_widget_radius"
+        android:bottomLeftRadius="@dimen/wren_widget_radius" />
+</shape>

@@ -3,6 +3,5 @@
     <color name="ic_launcher_background">#F4F4F2</color>
     <color name="wren_widget_bg">#F2FFFFFF</color>
     <color name="wren_widget_text">#FF050507</color>
-    <color name="wren_widget_muted">#FF5A5A62</color>
     <color name="wren_widget_placeholder">#FFEDEDEF</color>
 </resources>
