@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Text
@@ -12,6 +13,10 @@ import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.PullRefreshState
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +41,13 @@ import provider.MusicProvider
 import util.connectMessage
 import util.runCatchingExceptCancellation
 
+/**
+ * How old a cached library list may be when the screen is entered before it is read again. The
+ * cache itself lives for minutes so that hopping between tabs costs nothing; this is what keeps a
+ * like made elsewhere from hiding behind it for that long.
+ */
+private const val LIBRARY_REVALIDATE_MS = 60_000L
+
 private enum class LibraryTab(val label: String) {
     SONGS("songs"),
     PLAYLISTS("playlists"),
@@ -47,6 +59,7 @@ private enum class LibraryTab(val label: String) {
  * artists behind them. SoundCloud has no artist browsing, so that tab only shows up
  * for YouTube ([MusicProvider.supportsArtists]).
  */
+@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun LibraryScreen(
     provider: MusicProvider,
@@ -70,13 +83,15 @@ fun LibraryScreen(
     var artistsError by remember(provider) { mutableStateOf<String?>(null) }
     var tracksError by remember(provider) { mutableStateOf<String?>(null) }
     var retry by remember(provider) { mutableStateOf(0) }
+    var revalidated by remember(provider) { mutableStateOf(false) }
+    var refreshing by remember(provider) { mutableStateOf(false) }
     var tracksJob by remember(provider) { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
 
     val queue by engine.queue.collectAsState()
     val queueIndex by engine.queueIndex.collectAsState()
     val liked by SoundCloudLikes.liked.collectAsState()
-    val canLike = provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
+    val canLike = SoundCloudLikes.CAN_TOGGLE && provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
     val onLike: ((PlaylistTrack) -> Unit)? = if (canLike) {
         { track -> scope.launch { SoundCloudLikes.toggle(track.url) } }
     } else null
@@ -92,6 +107,12 @@ fun LibraryScreen(
     }
 
     LaunchedEffect(provider, tab, retry) {
+        // Once per visit, before the first read: a list older than a minute is fetched again
+        // rather than served, so a change made on the platform itself shows up on entry.
+        if (!revalidated) {
+            revalidated = true
+            provider.invalidateLibrary(olderThanMs = LIBRARY_REVALIDATE_MS)
+        }
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
             var prefetched = false
@@ -123,6 +144,7 @@ fun LibraryScreen(
                 .collect { page -> artists = page; if (page.isNotEmpty()) loading = false }
             loading = false
         }
+        refreshing = false
     }
 
     fun loadPlaylistTracks(playlist: Playlist) {
@@ -133,11 +155,31 @@ fun LibraryScreen(
                 .catch { failure -> tracksError = failure.connectMessage(); loading = false }
                 .collect { page -> tracks = page; if (page.isNotEmpty()) loading = false }
             loading = false
+            refreshing = false
         }
     }
 
     // Back leaves an open playlist before it leaves the tab.
     BackHandler(enabled = selectedPlaylist != null) { selectedPlaylist = null; tracks = null }
+
+    /** Pull-to-refresh: forget every cached list and read the one on screen again. */
+    fun refresh() {
+        if (refreshing) return
+        refreshing = true
+        scope.launch {
+            provider.invalidateLibrary()
+            val open = selectedPlaylist
+            if (open != null) {
+                tracks = null; tracksError = null
+                loadPlaylistTracks(open)
+            } else {
+                songs = null; playlists = null; artists = null
+                songsError = null; playlistsError = null; artistsError = null
+                retry++
+            }
+        }
+    }
+    val pullState = rememberPullRefreshState(refreshing = refreshing, onRefresh = ::refresh)
 
     Column(Modifier.fillMaxSize()) {
         val open = selectedPlaylist
@@ -158,10 +200,12 @@ fun LibraryScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (tracksError != null) {
-                LibraryError(tracksError!!) { loadPlaylistTracks(open) }
-            } else {
-                PlaylistTrackList(tracks, loading, engine, currentId, "this playlist is empty", queueTitle = open.title, liked = liked, onLike = onLike)
+            Refreshable(pullState, refreshing) {
+                if (tracksError != null) {
+                    LibraryError(tracksError!!) { loadPlaylistTracks(open) }
+                } else {
+                    PlaylistTrackList(tracks, loading, engine, currentId, "this playlist is empty", queueTitle = open.title, liked = liked, onLike = onLike)
+                }
             }
         } else {
             LibraryTabSelector(tabs, tab) { tab = it }
@@ -170,17 +214,39 @@ fun LibraryScreen(
                 LibraryTab.PLAYLISTS -> playlistsError
                 LibraryTab.ARTISTS -> artistsError
             }
-            if (error != null) {
-                LibraryError(error) { retry++ }
-            } else when (tab) {
-                LibraryTab.SONGS -> PlaylistTrackList(songs, loading, engine, currentId, "no liked songs yet", queueTitle = "liked songs", liked = liked, onLike = onLike)
-                LibraryTab.PLAYLISTS -> PlaylistList(playlists, loading) { playlist ->
-                    selectedPlaylist = playlist
-                    loadPlaylistTracks(playlist)
+            Refreshable(pullState, refreshing) {
+                if (error != null) {
+                    LibraryError(error) { retry++ }
+                } else when (tab) {
+                    LibraryTab.SONGS -> PlaylistTrackList(songs, loading, engine, currentId, "no liked songs yet", queueTitle = "liked songs", liked = liked, onLike = onLike)
+                    LibraryTab.PLAYLISTS -> PlaylistList(playlists, loading) { playlist ->
+                        selectedPlaylist = playlist
+                        loadPlaylistTracks(playlist)
+                    }
+                    LibraryTab.ARTISTS -> ArtistList(artists, loading, onArtistSearch)
                 }
-                LibraryTab.ARTISTS -> ArtistList(artists, loading, onArtistSearch)
             }
         }
+    }
+}
+
+/** The list area with the pull gesture attached and its indicator drawn over the top edge. */
+@OptIn(ExperimentalMaterialApi::class)
+@Composable
+private fun Refreshable(
+    state: PullRefreshState,
+    refreshing: Boolean,
+    content: @Composable () -> Unit,
+) {
+    Box(Modifier.fillMaxSize().pullRefresh(state)) {
+        content()
+        PullRefreshIndicator(
+            refreshing = refreshing,
+            state = state,
+            modifier = Modifier.align(Alignment.TopCenter),
+            backgroundColor = Chrome,
+            contentColor = PsIrisCyan,
+        )
     }
 }
 

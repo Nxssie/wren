@@ -219,6 +219,15 @@ object YouTubeProvider : MusicProvider {
      * an empty list rather than a fetch, so a provider that does not implement them serves an
      * empty library and logs nothing while doing it.
      */
+    override suspend fun invalidateLibrary(olderThanMs: Long) {
+        songs.evictOlderThan(olderThanMs)
+        playlists.evictOlderThan(olderThanMs)
+        artists.evictOlderThan(olderThanMs)
+        playlistTracks.evictOlderThan(olderThanMs)
+        // Followed artists feed the library's artist tab, so a refresh there re-reads them too.
+        subscriptions.evictOlderThan(olderThanMs)
+    }
+
     override fun librarySongsFlow(): Flow<List<PlaylistTrack>> =
         pagedFlow(TAG, songs, account()) { cursor -> likedSongsPage(cursor) }
 

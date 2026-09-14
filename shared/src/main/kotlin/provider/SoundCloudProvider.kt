@@ -166,6 +166,12 @@ private const val TAG = "SoundCloud"
 
     private fun playlistKey(playlistId: String): String = "${account()}|$playlistId"
 
+    override suspend fun invalidateLibrary(olderThanMs: Long) {
+        songs.evictOlderThan(olderThanMs)
+        playlists.evictOlderThan(olderThanMs)
+        playlistTracks.evictOlderThan(olderThanMs)
+    }
+
     override suspend fun librarySongs(): List<PlaylistTrack> =
         songs.getOrLoad(account()) { SoundCloud.userLikes(SoundCloudAuth.userId ?: return@getOrLoad emptyList()).map { it.toPlaylistTrack() } }
 }
