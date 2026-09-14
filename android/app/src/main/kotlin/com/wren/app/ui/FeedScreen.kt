@@ -104,6 +104,8 @@ private fun FeedScreen(
                 IconButton(onClick = { opened.removeAt(opened.lastIndex) }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
+                // The title flexes and the action keeps its width: a long title otherwise takes
+                // the whole row, leaving `play_all` a sliver in which it wraps one letter per line.
                 Text(
                     top.card.title,
                     color = TextPrimary,
@@ -111,14 +113,16 @@ private fun FeedScreen(
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
                 if (top is Open.Tracks && top.tracks?.isNotEmpty() == true) {
-                    Spacer(Modifier.weight(1f))
                     Text(
                         "play_all",
                         color = TextPrimary,
                         fontFamily = FontMono,
                         fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .clickable { engine.loadQueue(top.tracks.map { it.toQueueItem() }, 0, top.card.title) }
