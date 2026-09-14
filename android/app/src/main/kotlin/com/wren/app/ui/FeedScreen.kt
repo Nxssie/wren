@@ -1,11 +1,13 @@
 package com.wren.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
@@ -15,12 +17,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import models.SearchResult
 import models.Shelf
 import models.ShelfCard
 import models.ShelfCardKind
@@ -29,15 +33,19 @@ import player.PlayerEngine
 import provider.MusicProvider
 import util.runCatchingExceptCancellation
 
-/** A card that opened another feed rather than a track list. `null` shelves means "still loading". */
-private data class OpenShelves(val card: ShelfCard, val shelves: List<Shelf>?)
+/** A card's destination. `null` lists mean "still loading", never empty — mirroring the desktop screen. */
+private sealed interface Open {
+    val card: ShelfCard
+    data class Tracks(override val card: ShelfCard, val tracks: List<SearchResult>?) : Open
+    data class Shelves(override val card: ShelfCard, val shelves: List<Shelf>?) : Open
+}
 
 /**
  * A provider feed rendered as shelves. Home and Explore are the same screen with a different
  * fetch, so they share this one.
  *
- * A track card goes straight into the queue; a mood or genre card opens another feed, so those
- * are a stack and back leaves one level at a time.
+ * A card opens a navigable track list (playback is only ever started by an explicit tap there);
+ * a mood or genre card opens another feed, so those are a stack and back leaves one level at a time.
  *
  * A `null` shelf list means "not loaded yet", which is not the same as an empty one — the empty
  * state only appears once the fetch has actually come back with nothing.
@@ -50,7 +58,7 @@ private fun FeedScreen(
     load: suspend () -> List<Shelf>,
 ) {
     var shelves by remember(provider) { mutableStateOf<List<Shelf>?>(null) }
-    val opened = remember(provider) { mutableStateListOf<OpenShelves>() }
+    val opened = remember(provider) { mutableStateListOf<Open>() }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(provider) {
@@ -59,16 +67,24 @@ private fun FeedScreen(
 
     fun open(card: ShelfCard) {
         when (card.kind) {
-            ShelfCardKind.TRACKS -> scope.launch {
-                val tracks = runCatching { provider.collectionTracks(card.id) }.getOrDefault(emptyList())
-                if (tracks.isNotEmpty()) engine.loadQueue(tracks.map { it.toQueueItem() }, 0, card.title)
+            ShelfCardKind.TRACKS -> {
+                // Opening a list must never start playback on its own: it lands on the track
+                // list, and only an explicit tap there (a track or play_all) starts playing.
+                val index = opened.size
+                opened.add(Open.Tracks(card, null))
+                scope.launch {
+                    val tracks = card.tracks ?: runCatchingExceptCancellation {
+                        provider.collectionTracks(card.id)
+                    }.getOrDefault(emptyList())
+                    opened[index] = Open.Tracks(card, tracks)
+                }
             }
             ShelfCardKind.SHELVES -> {
                 val index = opened.size
-                opened.add(OpenShelves(card, null))
+                opened.add(Open.Shelves(card, null))
                 scope.launch {
-                    val nested = runCatching { provider.collectionShelves(card.id) }.getOrDefault(emptyList())
-                    opened[index] = OpenShelves(card, nested)
+                    val nested = runCatchingExceptCancellation { provider.collectionShelves(card.id) }.getOrDefault(emptyList())
+                    opened[index] = Open.Shelves(card, nested)
                 }
             }
         }
@@ -96,15 +112,45 @@ private fun FeedScreen(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (top is Open.Tracks && top.tracks?.isNotEmpty() == true) {
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "play_all",
+                        color = TextPrimary,
+                        fontFamily = FontMono,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { engine.loadQueue(top.tracks.map { it.toQueueItem() }, 0, top.card.title) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
 
-        val nested = top?.shelves
         when {
-            top != null -> when {
-                nested == null -> Loading()
-                nested.isEmpty() -> Message("nothing_in_here")
-                else -> ShelfList(nested, engine, ::open)
+            top is Open.Tracks -> when (val tracks = top.tracks) {
+                null -> Loading()
+                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 12.dp)) {
+                    if (tracks.isEmpty()) {
+                        item { Message("no_playable_tracks") }
+                    } else {
+                        itemsIndexed(tracks, key = { index, item -> "open:${top.card.id}:$index:${item.videoId}" }) { index, item ->
+                            TrackRow(
+                                trackKey = item.videoId,
+                                title = item.title,
+                                subtitle = item.subtitleText(),
+                                artworkUrl = item.thumbnailUrl.ifBlank { null },
+                                onClick = { engine.loadQueue(tracks.map { it.toQueueItem() }, index, top.card.title) },
+                            )
+                        }
+                    }
+                }
+            }
+            top is Open.Shelves -> when {
+                top.shelves == null -> Loading()
+                top.shelves.orEmpty().isEmpty() -> Message("nothing_in_here")
+                else -> ShelfList(top.shelves.orEmpty(), engine, ::open)
             }
             shelves == null -> Loading()
             shelves.orEmpty().isEmpty() -> Message(emptyHint)
@@ -151,17 +197,29 @@ private fun ShelfList(shelves: List<Shelf>, engine: PlayerEngine, onOpen: (Shelf
                     }
                 }
             }
-            itemsIndexed(
-                shelf.tracks,
-                key = { index, item -> "track:$sIdx:$index:${item.videoId}" },
-            ) { index, item ->
-                TrackRow(
-                    trackKey = item.videoId,
-                    title = item.title,
-                    subtitle = item.subtitleText(),
-                    artworkUrl = item.thumbnailUrl.ifBlank { null },
-                    onClick = { engine.loadQueue(shelf.tracks.map { it.toQueueItem() }, index, shelf.title) },
-                )
+            if (shelf.tracks.isNotEmpty()) {
+                // A shelf carrying a track list renders as one navigable entry — never inline
+                // play rows: playing starts only from an explicit tap inside the opened list.
+                item(key = "list:$sIdx") {
+                    val tracks = shelf.tracks
+                    ListCard(
+                        title = shelf.title,
+                        subtitle = shelf.caption ?: "${tracks.size} tracks",
+                        count = tracks.size,
+                        artworkUrl = tracks.firstOrNull { it.thumbnailUrl.isNotBlank() }?.thumbnailUrl,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        onClick = {
+                            onOpen(
+                                ShelfCard(
+                                    id = "shelf-$sIdx",
+                                    title = shelf.title,
+                                    subtitle = shelf.caption,
+                                    tracks = tracks
+                                )
+                            )
+                        }
+                    )
+                }
             }
         }
     }
@@ -174,6 +232,34 @@ fun HomeScreen(provider: MusicProvider, engine: PlayerEngine) =
 @Composable
 fun ExploreScreen(provider: MusicProvider, engine: PlayerEngine) =
     FeedScreen(provider, engine, provider.exploreEmptyHint) { provider.explore() }
+
+@Composable
+private fun ListCard(
+    title: String,
+    subtitle: String,
+    count: Int,
+    artworkUrl: String?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(PsSteel400.copy(alpha = 0.08f))
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Artwork(artworkUrl, Modifier.size(56.dp))
+        Column {
+            Text(title, color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$count tracks", color = PsSteel400, fontFamily = FontMono, fontSize = 10.sp)
+        }
+    }
+}
 
 @Composable
 private fun SectionHeader(shelf: Shelf) {

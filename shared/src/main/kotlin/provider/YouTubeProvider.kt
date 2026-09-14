@@ -128,8 +128,16 @@ object YouTubeProvider : MusicProvider {
             picks.takeIf { it.isNotEmpty() }?.let {
                 Shelf(
                     title = "quick picks",
-                    caption = "radios wren built from what you play here",
-                    tracks = it,
+                    caption = "radios wren built from what you play here — ${it.size} tracks — open_the_list",
+                    cards = listOf(
+                        ShelfCard(
+                            id = "quick-picks",
+                            title = "quick picks",
+                            subtitle = "${it.size} tracks",
+                            artworkUrl = it.firstNotNullOfOrNull { t -> t.thumbnailUrl.ifBlank { null } },
+                            tracks = it
+                        )
+                    )
                 )
             },
             releases.takeIf { it.isNotEmpty() }?.let {
