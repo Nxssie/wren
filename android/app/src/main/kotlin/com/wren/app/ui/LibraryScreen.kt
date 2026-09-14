@@ -252,6 +252,7 @@ private fun PlaylistTrackList(
         else -> LazyColumn(Modifier.fillMaxSize()) {
             itemsIndexed(list, key = { index, item -> "${item.source}:${item.videoId}:$index" }) { index, item ->
                 TrackRow(
+                    trackKey = item.videoId,
                     title = item.title,
                     subtitle = listOf(item.channelTitle, item.duration)
                         .filter { it.isNotBlank() }

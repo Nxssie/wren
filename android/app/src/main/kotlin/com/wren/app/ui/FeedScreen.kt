@@ -156,6 +156,7 @@ private fun ShelfList(shelves: List<Shelf>, engine: PlayerEngine, onOpen: (Shelf
                 key = { index, item -> "track:$sIdx:$index:${item.videoId}" },
             ) { index, item ->
                 TrackRow(
+                    trackKey = item.videoId,
                     title = item.title,
                     subtitle = item.subtitleText(),
                     artworkUrl = item.thumbnailUrl.ifBlank { null },

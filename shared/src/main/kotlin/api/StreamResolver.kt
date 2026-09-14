@@ -1,6 +1,17 @@
 package api
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+
+/**
+ * The platform serves this track only behind content protection (SoundCloud's encrypted HLS on
+ * monetised tracks). Not a fetch that went wrong: retrying will not help, and the user should be
+ * told why the track was skipped.
+ */
+class ProtectedStreamException(trackKey: String) : Exception("protected stream: $trackKey")
 
 /** Resolves a playable URL for a track key — a bare YouTube video id or a SoundCloud permalink. */
 interface StreamResolver {
@@ -41,12 +52,48 @@ fun forgetStreamUrl(trackKey: String) {
     urlCache.remove(trackKey)
 }
 
+private val _protectedStreams = MutableStateFlow<Set<String>>(emptySet())
+
+/**
+ * Track keys found to be served only behind content protection, for lists to mark and refuse
+ * before a tap. Filled as tracks are resolved (the lists prefetch their first rows), so a row can
+ * flip after it appears.
+ */
+val protectedStreams: StateFlow<Set<String>> = _protectedStreams.asStateFlow()
+
+/** Whether the last resolve found [trackKey] to be served only behind content protection. */
+fun isProtectedStream(trackKey: String): Boolean = trackKey in _protectedStreams.value
+
+/** Records [trackKey] as protected; called by the resolver and by parsers that can see the renditions. */
+fun markProtectedStream(trackKey: String) {
+    _protectedStreams.update { it + trackKey }
+}
+
+/**
+ * Whether a SoundCloud track's transcodings leave nothing Wren will play. A track that lists any
+ * encrypted rendition still lists the plain MP3 ones, but those answer 404 (checked across
+ * ad-supported, Blackbox and open tracks alike), so the encrypted entry alone decides it, from
+ * the listing, before any media call.
+ */
+fun soundCloudProtected(protocols: List<String>): Boolean = protocols.any { "encrypted" in it }
+
+/**
+ * Null when there is nothing to play. A protected track is remembered and answered without a
+ * network round-trip from then on; ask [isProtectedStream] to tell that case from an outage.
+ */
 suspend fun resolveStreamUrl(trackKey: String): String? {
+    if (isProtectedStream(trackKey)) return null
     val cached = urlCache[trackKey]
     if (cached != null && System.currentTimeMillis() - cached.fetchedAt < cached.ttlMs) {
         return cached.url
     }
-    return Streams.resolver.resolve(trackKey)?.also {
+    val resolved = try {
+        Streams.resolver.resolve(trackKey)
+    } catch (e: ProtectedStreamException) {
+        markProtectedStream(trackKey)
+        return null
+    }
+    return resolved?.also {
         val ttl = if (isSoundCloud(trackKey)) SOUNDCLOUD_TTL_MS else YOUTUBE_TTL_MS
         urlCache[trackKey] = CachedUrl(it, System.currentTimeMillis(), ttl)
     }

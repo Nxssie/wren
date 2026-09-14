@@ -334,6 +334,7 @@ fun NowPlayingScreen(engine: PlayerEngine) {
                 LazyColumn(Modifier.weight(1f), state = listState) {
                     itemsIndexed(queue, key = { i, q -> "$i:${q.source}:${q.videoId}" }) { queueIndex, queueItem ->
                         TrackRow(
+                            trackKey = queueItem.videoId,
                             title = queueItem.title.ifBlank { queueItem.videoId },
                             subtitle = queueItem.subtitleText(),
                             artworkUrl = artworkFor(queueItem),

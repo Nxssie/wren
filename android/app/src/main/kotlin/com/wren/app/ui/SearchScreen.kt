@@ -102,6 +102,7 @@ fun SearchScreen(
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 itemsIndexed(results, key = { index, item -> "${item.source}:${item.videoId}:$index" }) { index, item ->
                     TrackRow(
+                        trackKey = item.videoId,
                         title = item.title,
                         subtitle = item.subtitleText(),
                         artworkUrl = item.thumbnailUrl.ifBlank { null },

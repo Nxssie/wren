@@ -22,6 +22,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import api.ListeningHistory
+import api.isProtectedStream
 import api.forgetStreamUrl
 import api.resolveStreamUrl
 import api.warmupStreamConnection
@@ -168,6 +169,13 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
 
     private var consecutiveLoadFailures = 0
     private val maxConsecutiveLoadFailures = 3
+
+    /**
+     * Until when a skip notice stays on the bar. The track after a skip loads within milliseconds,
+     * which would wipe the reason before anyone could read it.
+     */
+    private var noticeUntilMs = 0L
+    private var noticeJob: Job? = null
 
     /** Network retries spent on the current item; reset by any load that is not a retry. */
     private var sameTrackRetries = 0
@@ -437,6 +445,17 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         return builder.build()
     }
 
+    /** Puts [message] on the bar and keeps it there through the next track's start. */
+    private fun showNotice(message: String) {
+        _lastError.value = message
+        noticeUntilMs = System.currentTimeMillis() + NOTICE_MS
+        noticeJob?.cancel()
+        noticeJob = scope.launch {
+            delay(NOTICE_MS)
+            if (_lastError.value == message) _lastError.value = null
+        }
+    }
+
     private fun isNetworkError(error: PlaybackException): Boolean = when (error.errorCode) {
         PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
@@ -470,9 +489,16 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         scope.launch {
             val url = withContext(Dispatchers.IO) { resolveStreamUrl(item.videoId) }
             if (url == null) {
+                val name = item.title.ifBlank { item.videoId }
                 // item.url is a watch page, not a stream — never hand it to the player.
                 Log.e("ExoPlayerEngine", "No stream URL for ${item.videoId}; skipping")
-                _lastError.value = "no stream for ${item.title.ifBlank { item.videoId }}"
+                showNotice(
+                    if (isProtectedStream(item.videoId)) {
+                        "encrypted on SoundCloud, skipped “$name”"
+                    } else {
+                        "no stream for $name"
+                    }
+                )
                 _isLoading.value = false
                 _isEnqueuing.value = false
                 advance(force = true)
@@ -483,7 +509,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             player.prepare()
             player.play()
             consecutiveLoadFailures = 0
-            _lastError.value = null
+            if (System.currentTimeMillis() >= noticeUntilMs) _lastError.value = null
             ListeningHistory.record(item)
             WrenPlaybackService.start(context)
             prefetch(index + 1)
@@ -584,3 +610,6 @@ private const val MIN_BUFFER_MS = 90_000
 private const val MAX_BUFFER_MS = 300_000
 private const val PLAYBACK_BUFFER_MS = 2_500
 private const val REBUFFER_MS = 5_000
+
+/** How long a skip notice stays readable on the player bar. */
+private const val NOTICE_MS = 8_000L

@@ -127,18 +127,22 @@ class HttpStreamResolver : StreamResolver {
             val transcodings = track["media"]?.jsonObject?.get("transcodings")?.jsonArray
                 ?.mapNotNull { it as? JsonObject }
                 ?: return@runCatchingExceptCancellation null
+            // Content protection is decided from the listing: the plain renditions such a track
+            // still lists answer 404, so there is no point paying the media call to find out.
+            val offered = transcodings.mapNotNull { it.protocol() }
+            if (soundCloudProtected(offered)) throw ProtectedStreamException(permalink)
             // Progressive first: one file, seekable by byte range. Otherwise the plain HLS
-            // rendition, which is what newer uploads offer instead. Encrypted HLS is content
-            // protection and is not touched.
+            // rendition, which is what newer uploads offer instead.
             val streamUrl = transcodings.pick("progressive") ?: transcodings.pick("hls")
             if (streamUrl == null) {
-                val offered = transcodings.mapNotNull { it.protocol() }
                 Log.w("HttpStreamResolver", "no playable transcoding for $permalink (offered: $offered)")
                 return@runCatchingExceptCancellation null
             }
 
             scApiGet(streamUrl, permalink)?.get("url")?.jsonPrimitive?.contentOrNull
-        }.onFailure { Log.e("HttpStreamResolver", "SoundCloud stream failed for $permalink", it) }.getOrNull()
+        }.onFailure {
+            if (it !is ProtectedStreamException) Log.e("HttpStreamResolver", "SoundCloud stream failed for $permalink", it)
+        }.getOrElse { if (it is ProtectedStreamException) throw it else null }
     }
 
     private fun JsonObject.protocol(): String? =

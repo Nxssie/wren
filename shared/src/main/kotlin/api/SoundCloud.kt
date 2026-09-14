@@ -395,6 +395,12 @@ internal fun parseScTrack(obj: JsonObject): SearchResult? {
     val playbackCount = obj["playback_count"]?.jsonPrimitive?.longOrNull
     val genre = obj["genre"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
+    // Listings carry the renditions too, so a track served only encrypted is flagged as it is
+    // parsed, and the row can refuse it before anyone tries to play it.
+    val protocols = obj["media"]?.jsonObject?.get("transcodings")?.jsonArray.orEmpty()
+        .mapNotNull { it.jsonObject["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull }
+    if (soundCloudProtected(protocols)) markProtectedStream(permalinkUrl)
+
     return SearchResult(
         videoId = permalinkUrl,
         title = title,
