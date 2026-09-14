@@ -17,12 +17,12 @@ import java.net.URLEncoder
  * default yt-dlp uses, then ANDROID_VR and IOS. Every call carries a visitor id fetched
  * from the YouTube homepage — without it the request is answered with "sign in to confirm
  * you're not a bot" for a good share of music videos. SoundCloud uses the public
- * progressive transcoding of a track.
+ * progressive transcoding of a track, or its HLS rendition when that is all it offers.
  */
 class HttpStreamResolver : StreamResolver {
 
     override suspend fun resolve(trackKey: String): String? =
-        if (isSoundCloud(trackKey)) soundCloudProgressive(trackKey) else youTubeAudio(trackKey)
+        if (isSoundCloud(trackKey)) soundCloudStream(trackKey) else youTubeAudio(trackKey)
 
     /**
      * Tries each InnerTube client in order and keeps the first one that hands back a plain
@@ -116,7 +116,7 @@ class HttpStreamResolver : StreamResolver {
     private fun boundIp(url: String): String =
         Regex("[?&]ip=([^&]+)").find(url)?.groupValues?.get(1)?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "?"
 
-    private suspend fun soundCloudProgressive(permalink: String): String? = withContext(Dispatchers.IO) {
+    private suspend fun soundCloudStream(permalink: String): String? = withContext(Dispatchers.IO) {
         // Not `runCatching`: that also swallows CancellationException, so changing track mid-resolve
         // came back as "no stream" and the caller skipped a second time on top of the one that
         // cancelled it.
@@ -125,23 +125,33 @@ class HttpStreamResolver : StreamResolver {
                 ?: return@runCatchingExceptCancellation null
 
             val transcodings = track["media"]?.jsonObject?.get("transcodings")?.jsonArray
+                ?.mapNotNull { it as? JsonObject }
                 ?: return@runCatchingExceptCancellation null
-            val progressive = transcodings.mapNotNull { it as? JsonObject }
-                .filter { it["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull == "progressive" }
-            val streamUrl = progressive.firstNotNullOfOrNull { it["url"]?.jsonPrimitive?.contentOrNull }
+            // Progressive first: one file, seekable by byte range. Otherwise the plain HLS
+            // rendition, which is what newer uploads offer instead. Encrypted HLS is content
+            // protection and is not touched.
+            val streamUrl = transcodings.pick("progressive") ?: transcodings.pick("hls")
             if (streamUrl == null) {
-                // A track that only offers HLS fails here for good, which is worth telling apart
-                // from a fetch that merely went wrong.
-                val offered = transcodings.mapNotNull {
-                    it.jsonObject["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull
-                }
-                Log.w("HttpStreamResolver", "no progressive transcoding for $permalink (offered: $offered)")
+                val offered = transcodings.mapNotNull { it.protocol() }
+                Log.w("HttpStreamResolver", "no playable transcoding for $permalink (offered: $offered)")
                 return@runCatchingExceptCancellation null
             }
 
             scApiGet(streamUrl, permalink)?.get("url")?.jsonPrimitive?.contentOrNull
         }.onFailure { Log.e("HttpStreamResolver", "SoundCloud stream failed for $permalink", it) }.getOrNull()
     }
+
+    private fun JsonObject.protocol(): String? =
+        this["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.mimeType(): String =
+        this["format"]?.jsonObject?.get("mime_type")?.jsonPrimitive?.contentOrNull.orEmpty()
+
+    /** The transcoding URL for [protocol], MP3 renditions ahead of Opus: every decoder plays MP3. */
+    private fun List<JsonObject>.pick(protocol: String): String? =
+        filter { it.protocol() == protocol }
+            .sortedBy { if (it.mimeType().startsWith("audio/mpeg")) 0 else 1 }
+            .firstNotNullOfOrNull { it["url"]?.jsonPrimitive?.contentOrNull }
 
     /**
      * A GET carrying the scraped client id, retried once when the id is what got refused.

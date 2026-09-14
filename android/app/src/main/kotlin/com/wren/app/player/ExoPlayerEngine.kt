@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -429,6 +430,13 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         return true
     }
 
+    /** SoundCloud's HLS playlists carry no .m3u8 in the path, so the type is stated, not sniffed. */
+    private fun mediaItemFor(url: String): MediaItem {
+        val builder = MediaItem.Builder().setUri(url)
+        if (".m3u8" in url || "/playlist" in url) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+        return builder.build()
+    }
+
     private fun isNetworkError(error: PlaybackException): Boolean = when (error.errorCode) {
         PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
@@ -471,7 +479,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
                 return@launch
             }
             _isEnqueuing.value = false
-            player.setMediaItem(MediaItem.fromUri(url), (startAtSec * 1000).toLong().coerceAtLeast(0))
+            player.setMediaItem(mediaItemFor(url), (startAtSec * 1000).toLong().coerceAtLeast(0))
             player.prepare()
             player.play()
             consecutiveLoadFailures = 0
