@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.Color as AndroidColor
 import android.util.LruCache
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -49,6 +50,10 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
+import api.SoundCloudLikes
+import api.YouTubeLikes
+import auth.GoogleAuth
+import auth.SoundCloudAuth
 import com.wren.app.MainActivity
 import com.wren.app.R
 import com.wren.app.WrenApplication
@@ -64,6 +69,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import models.QueueItem
+import models.Source
 import okhttp3.Request
 import util.Http
 import util.Log
@@ -92,6 +99,9 @@ private data class WrenWidgetState(
     val artworkUrl: String?,
     val playing: Boolean,
     val hasTrack: Boolean,
+    val source: Source = Source.YT_MUSIC,
+    /** Whether the track is kept on its platform, or null when the user is not signed in there. */
+    val liked: Boolean? = null,
 ) {
     companion object {
         fun of(engine: ExoPlayerEngine?): WrenWidgetState {
@@ -102,7 +112,15 @@ private data class WrenWidgetState(
                 artworkUrl = artworkFor(item),
                 playing = engine.isPlaying.value,
                 hasTrack = true,
+                source = item.source,
+                liked = likedOf(item),
             )
+        }
+
+        /** The platform's own "kept" state: a SoundCloud like, or a YouTube like (the collection). */
+        private fun likedOf(item: QueueItem): Boolean? = when (item.source) {
+            Source.SOUNDCLOUD -> if (SoundCloudAuth.isAuthenticated) SoundCloudLikes.isLiked(item.url) else null
+            else -> if (GoogleAuth.isAuthenticated) YouTubeLikes.isLiked(item.videoId) else null
         }
 
         val idle = WrenWidgetState("Wren", "", null, playing = false, hasTrack = false)
@@ -148,7 +166,13 @@ private fun rememberWidgetState(engine: ExoPlayerEngine?): WrenWidgetState {
     engine.isPlaying.collectAsState().value
     engine.queueIndex.collectAsState().value
     engine.queue.collectAsState().value
-    return WrenWidgetState.of(engine)
+    SoundCloudLikes.liked.collectAsState().value
+    YouTubeLikes.liked.collectAsState().value
+    val state = WrenWidgetState.of(engine)
+    // YouTube ratings are looked up per video; ask for this one so the icon is right, not a guess.
+    val videoId = engine.queue.value.getOrNull(engine.queueIndex.value)?.takeIf { it.source != Source.SOUNDCLOUD }?.videoId
+    LaunchedEffect(videoId) { if (videoId != null) YouTubeLikes.ensureKnown(videoId) }
+    return state
 }
 
 @Composable
@@ -215,7 +239,7 @@ private fun WrenWidgetContent() {
             )
             if (state.hasTrack) {
                 Spacer(GlanceModifier.height(6.dp))
-                // Previous, play and next, spread evenly.
+                // Previous, play, next and the platform's keep-this action, spread evenly.
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Vertical.CenterVertically,
@@ -229,6 +253,25 @@ private fun WrenWidgetContent() {
                     )
                     Spacer(GlanceModifier.defaultWeight())
                     WidgetControl(R.drawable.ic_widget_next, WrenPlaybackService.ACTION_NEXT, "Next")
+                    if (state.liked != null) {
+                        Spacer(GlanceModifier.defaultWeight())
+                        val soundCloud = state.source == Source.SOUNDCLOUD
+                        WidgetControl(
+                            icon = when {
+                                soundCloud && state.liked -> R.drawable.ic_widget_heart_filled
+                                soundCloud -> R.drawable.ic_widget_heart
+                                state.liked -> R.drawable.ic_widget_library_added
+                                else -> R.drawable.ic_widget_library_add
+                            },
+                            serviceAction = WrenPlaybackService.ACTION_LIKE,
+                            description = when {
+                                soundCloud && state.liked -> "Unlike"
+                                soundCloud -> "Like"
+                                state.liked -> "Remove from collection"
+                                else -> "Add to collection"
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -287,6 +330,8 @@ object WrenWidgetUpdater {
                     engine.isPlaying,
                     engine.queueIndex,
                     engine.queue,
+                    SoundCloudLikes.liked,
+                    YouTubeLikes.liked,
                 ),
             ) { WrenWidgetState.of(engine) }
                 .distinctUntilChanged()

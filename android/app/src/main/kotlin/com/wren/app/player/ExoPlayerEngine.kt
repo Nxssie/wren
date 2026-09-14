@@ -7,6 +7,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import api.SoundCloudLikes
+import api.YouTubeLikes
 import api.StreamRequestHeaders
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import util.Http
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import models.Source
 import models.QueueItem
 import models.RepeatMode
 import player.LoudnessStore
@@ -492,5 +495,17 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     override fun onSeek(seconds: Double) {
         seek(seconds)
         WrenPlaybackService.update(context)
+    }
+
+    override fun onLike() {
+        val item = current() ?: return
+        scope.launch {
+            // Each platform's own notion of "keep this": a SoundCloud like, or a YouTube like, which
+            // is what puts a video in the library's collection.
+            when (item.source) {
+                Source.SOUNDCLOUD -> SoundCloudLikes.toggle(item.url)
+                else -> YouTubeLikes.toggle(item.videoId)
+            }
+        }
     }
 }

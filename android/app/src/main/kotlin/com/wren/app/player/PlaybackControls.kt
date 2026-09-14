@@ -19,4 +19,7 @@ interface PlaybackControls {
     fun onNext()
     fun onPrevious()
     fun onSeek(seconds: Double)
+
+    /** Likes or unlikes the current item on its own platform; a no-op when signed out of it. */
+    fun onLike()
 }

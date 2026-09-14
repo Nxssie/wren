@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
+import api.YouTubeLikes
 import auth.AuthEvents
 import util.ThemePreference
 import player.PlayerEngine
@@ -94,7 +95,10 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     val provider = remember(platform) { Providers.of(platform) }
 
     // Likes follow the SoundCloud session: load on start, reload/clear on sign in/out.
-    LaunchedEffect(authVersion) { SoundCloudLikes.refresh() }
+    LaunchedEffect(authVersion) {
+        SoundCloudLikes.refresh()
+        YouTubeLikes.reset()
+    }
 
     // A tap on the widget means "show me what is playing". Only a request made from inside the
     // app gets somewhere to go back to, so the cold start that raised it leaves on back. The
