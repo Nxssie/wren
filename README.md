@@ -49,6 +49,7 @@
 - Now Playing screen with synced/plain lyrics (from [lrclib.net](https://lrclib.net)) and resizable queue panel
 - Dark/light theme toggle in the sidebar
 - Persistent player bar with seek, volume, and queue controls
+- Android home-screen widget: now playing with play/pause and skip, driven by the same playback service
 - Stream URL resolution via `yt-dlp` (bundled in AppImage, or available in PATH)
 - 4-hour stream URL cache for YouTube, 20-minute cache for SoundCloud progressive streams
 

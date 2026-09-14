@@ -278,10 +278,13 @@ class WrenPlaybackService : Service() {
         private const val ART_TARGET_PX = 512
         private const val ACTION_START = "com.wren.app.START"
         private const val ACTION_UPDATE = "com.wren.app.UPDATE"
-        private const val ACTION_TOGGLE = "com.wren.app.TOGGLE"
         private const val ACTION_DISMISS = "com.wren.app.DISMISS"
-        private const val ACTION_NEXT = "com.wren.app.NEXT"
-        private const val ACTION_PREVIOUS = "com.wren.app.PREVIOUS"
+
+        // The home-screen widget sends these straight to the service, so they travel a step
+        // further than the notification actions above.
+        internal const val ACTION_TOGGLE = "com.wren.app.TOGGLE"
+        internal const val ACTION_NEXT = "com.wren.app.NEXT"
+        internal const val ACTION_PREVIOUS = "com.wren.app.PREVIOUS"
         private const val SUPPORTED_ACTIONS = PlaybackStateCompat.ACTION_PLAY or
             PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or

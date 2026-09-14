@@ -7,6 +7,7 @@ import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
 import com.wren.app.ui.allowSoundCloudDownloads
+import com.wren.app.widget.WrenWidgetUpdater
 import provider.LibraryWarmup
 import util.AppDirs
 import util.DownloadPreference
@@ -40,6 +41,9 @@ class WrenApplication : Application() {
         Streams.resolver = HttpStreamResolver()
         engine = ExoPlayerEngine(this)
         engine.start()
+        // Repaints the home-screen widget from the engine's state; starts with no widget placed too,
+        // because the collector only reacts to track/transport changes, not to the clock.
+        WrenWidgetUpdater.start(this)
         // The library costs a walk over every page of it; build it while the user is elsewhere.
         LibraryWarmup.start()
     }
