@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import player.FFmpegPlayer
 import models.QueueItem
+import util.runCatchingExceptCancellation
 import java.net.URI
 
 // Lyrics state machine
@@ -50,6 +51,7 @@ private sealed class LyricsState {
     object Loading : LyricsState()
     data class Loaded(val result: LyricsResult) : LyricsState()
     object NotFound : LyricsState()
+    object Unavailable : LyricsState()
 }
 
 @Composable
@@ -89,9 +91,12 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
             if (player.duration.value > 0) return@repeat
             delay(200)
         }
-        lyricsState = fetchLyrics(displayTitle, artist, player.duration.value)
-            ?.let { LyricsState.Loaded(it) }
-            ?: LyricsState.NotFound
+        lyricsState = runCatchingExceptCancellation {
+            fetchLyrics(displayTitle, artist, player.duration.value)
+        }.fold(
+            onSuccess = { found -> found?.let { LyricsState.Loaded(it) } ?: LyricsState.NotFound },
+            onFailure = { LyricsState.Unavailable },
+        )
     }
 
     // Active lyric line index; -1 for plain (unsynced) lyrics so nothing is highlighted
@@ -154,7 +159,8 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
                 NpLyrics(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     lyricsState = lyricsState,
-                    activeLineIdx = activeLineIdx
+                    activeLineIdx = activeLineIdx,
+                    onSeek = { timeMs -> player.seek(timeMs / 1000.0) }
                 )
                 if (queue.size > 1) {
                     NpQueue(queue = queue, activeIndex = queueIndex, player = player, height = queueHeight, onHeightChange = { queueHeight = it })
@@ -168,7 +174,8 @@ fun NowPlayingScreen(player: FFmpegPlayer) {
 private fun NpLyrics(
     modifier: Modifier,
     lyricsState: LyricsState,
-    activeLineIdx: Int
+    activeLineIdx: Int,
+    onSeek: (Long) -> Unit
 ) {
     val listState = rememberLazyListState()
     val autoScroll = rememberUserAwareAutoScroll(listState)
@@ -208,6 +215,7 @@ private fun NpLyrics(
                 is LyricsState.Idle    -> ""
                 is LyricsState.Loading -> "loading..."
                 is LyricsState.NotFound -> "// no_lyrics;"
+                is LyricsState.Unavailable -> "// lyrics_unavailable;"
                 is LyricsState.Loaded  -> if (lyricsState.result.synced) "synced;" else "plain_text;"
             }
             if (statusLabel.isNotEmpty()) {
@@ -242,6 +250,16 @@ private fun NpLyrics(
                     )
                 }
             }
+            is LyricsState.Unavailable -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "// lyrics_unavailable;",
+                        fontFamily = FontMono,
+                        fontSize = 13.sp,
+                        color = TextSecondary
+                    )
+                }
+            }
             is LyricsState.Loaded -> {
                 val lines = lyricsState.result.lines
                 LazyColumn(
@@ -260,6 +278,8 @@ private fun NpLyrics(
                             color = if (isActive || activeLineIdx < 0) TextPrimary else TextSecondary,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                // Only synced lines know where they are; a plain line is all timeMs 0.
+                                .clickable(enabled = lyricsState.result.synced) { onSeek(line.timeMs) }
                                 .padding(horizontal = 28.dp, vertical = 10.dp)
                         )
                     }

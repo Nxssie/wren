@@ -4,6 +4,9 @@ import models.ArtistResult
 import models.Playlist
 import models.PlaylistTrack
 import models.SearchResult
+import models.Shelf
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import models.Source
 
 /** A streaming platform the user can browse. Sessions are per-platform, the queue is shared. */
@@ -19,27 +22,8 @@ enum class Platform(val code: String, val label: String) {
     }
 }
 
-/** A playlist-like card (mix, station, curated playlist). Opened through [MusicProvider.collectionTracks]. */
-data class DiscoverCollection(
-    val id: String,
-    val title: String,
-    val subtitle: String? = null,
-    val artworkUrl: String? = null
-)
-
 /**
- * One block on the Discover screen. Either a flat track list, a row of collections,
- * or both — the screen renders whatever is non-empty.
- */
-data class DiscoverSection(
-    val title: String,
-    val caption: String? = null,
-    val tracks: List<SearchResult> = emptyList(),
-    val collections: List<DiscoverCollection> = emptyList()
-)
-
-/**
- * Everything a screen needs from a platform. Browsing (search, discover, library) is
+ * Everything a screen needs from a platform. Browsing (home, search, explore, library) is
  * scoped to one provider at a time; playback stays platform-agnostic through QueueItem.
  *
  * Capabilities differ per platform — screens must check the `supports*` flags instead
@@ -53,10 +37,10 @@ interface MusicProvider {
     val supportsStations: Boolean
     val supportsLibrary: Boolean
 
-    /** What the Discover tab is called for this platform — it must not overclaim. */
-    val discoverLabel: String get() = "discover"
-    /** Shown when [discover] returns nothing; says honestly where the content comes from. */
-    val discoverEmptyHint: String get() = "nothing_to_discover_yet"
+    /** Shown when [home] returns nothing; says honestly where the content comes from. */
+    val homeEmptyHint: String get() = "nothing_to_show_yet"
+    /** Shown when [explore] returns nothing; says honestly where the content comes from. */
+    val exploreEmptyHint: String get() = "nothing_to_explore_yet"
 
     suspend fun search(query: String, limit: Int = 20): List<SearchResult>
     suspend fun searchArtists(query: String): List<ArtistResult> = emptyList()
@@ -64,11 +48,17 @@ interface MusicProvider {
     /** Radio seeded by [seed]; the seed itself comes first. Empty when unsupported. */
     suspend fun station(seed: SearchResult): List<SearchResult> = emptyList()
 
-    /** Personalised or curated sections. [forceRefresh] bypasses any weekly/daily cache. */
-    suspend fun discover(forceRefresh: Boolean = false): List<DiscoverSection> = emptyList()
+    /** What the platform puts in front of the user. [forceRefresh] bypasses any weekly/daily cache. */
+    suspend fun home(forceRefresh: Boolean = false): List<Shelf> = emptyList()
 
-    /** Tracks behind a [DiscoverCollection.id] from this provider's discover sections. */
+    /** Curated, trending and browsable shelves. Empty when unsupported. */
+    suspend fun explore(): List<Shelf> = emptyList()
+
+    /** Tracks behind a [ShelfCard] whose kind is [ShelfCardKind.TRACKS]. */
     suspend fun collectionTracks(collectionId: String): List<SearchResult> = emptyList()
+
+    /** Shelves behind a [ShelfCard] whose kind is [ShelfCardKind.SHELVES] — a mood or genre page. */
+    suspend fun collectionShelves(collectionId: String): List<Shelf> = emptyList()
 
     suspend fun playlists(): List<Playlist> = emptyList()
     suspend fun playlistTracks(playlistId: String): List<PlaylistTrack> = emptyList()
@@ -77,6 +67,14 @@ interface MusicProvider {
     suspend fun librarySongs(): List<PlaylistTrack> = emptyList()
     /** Artists behind the user's library (follows/subscriptions). Empty when unsupported. */
     suspend fun libraryArtists(): List<ArtistResult> = emptyList()
+
+    /**
+     * The library as it arrives: the cached copy in one emission when it is fresh, otherwise one
+     * emission per page, so the screen fills while the rest is still being walked.
+     */
+    fun librarySongsFlow(): Flow<List<PlaylistTrack>> = flowOf(emptyList())
+    fun libraryArtistsFlow(): Flow<List<ArtistResult>> = flowOf(emptyList())
+    fun playlistTracksFlow(playlistId: String): Flow<List<PlaylistTrack>> = flowOf(emptyList())
 }
 
 object Providers {

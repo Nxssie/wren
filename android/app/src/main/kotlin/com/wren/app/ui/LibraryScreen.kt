@@ -3,7 +3,6 @@ package com.wren.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
@@ -24,6 +23,9 @@ import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
 import api.resolveStreamUrl
 import provider.Platform
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import models.ArtistResult
 import models.Playlist
@@ -59,7 +61,7 @@ fun LibraryScreen(
     var playlists by remember(provider) { mutableStateOf<List<Playlist>?>(null) }
     var artists by remember(provider) { mutableStateOf<List<ArtistResult>?>(null) }
     var selectedPlaylist by remember(provider) { mutableStateOf<Playlist?>(null) }
-    var tracks by remember(provider) { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
+    var tracks by remember(provider) { mutableStateOf<List<PlaylistTrack>?>(null) }
     var loading by remember(provider) { mutableStateOf(false) }
     // A fetch that failed leaves its list null and shows this instead: an empty list is a fact the
     // user cannot tell apart from a request that never arrived.
@@ -68,6 +70,7 @@ fun LibraryScreen(
     var artistsError by remember(provider) { mutableStateOf<String?>(null) }
     var tracksError by remember(provider) { mutableStateOf<String?>(null) }
     var retry by remember(provider) { mutableStateOf(0) }
+    var tracksJob by remember(provider) { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
 
     val queue by engine.queue.collectAsState()
@@ -91,11 +94,20 @@ fun LibraryScreen(
     LaunchedEffect(provider, tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.librarySongs() }
-            songs = result.getOrNull()
-            songsError = result.exceptionOrNull()?.connectMessage()
+            var prefetched = false
+            provider.librarySongsFlow()
+                .catch { failure -> songsError = failure.connectMessage(); loading = false }
+                .collect { page ->
+                    songs = page
+                    // A page can arrive empty — the first fifty likes may hold no music at all —
+                    // and that is not an answer until the walk is over.
+                    if (page.isNotEmpty()) loading = false
+                    if (!prefetched) {
+                        prefetched = true
+                        page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
+                }
             loading = false
-            songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
@@ -106,25 +118,26 @@ fun LibraryScreen(
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.libraryArtists() }
-            artists = result.getOrNull()
-            artistsError = result.exceptionOrNull()?.connectMessage()
+            provider.libraryArtistsFlow()
+                .catch { failure -> artistsError = failure.connectMessage(); loading = false }
+                .collect { page -> artists = page; if (page.isNotEmpty()) loading = false }
             loading = false
         }
     }
 
     fun loadPlaylistTracks(playlist: Playlist) {
-        scope.launch {
+        tracksJob?.cancel()
+        tracksJob = scope.launch {
             loading = true
-            val result = runCatchingExceptCancellation { provider.playlistTracks(playlist.id) }
-            tracks = result.getOrNull().orEmpty()
-            tracksError = result.exceptionOrNull()?.connectMessage()
+            provider.playlistTracksFlow(playlist.id)
+                .catch { failure -> tracksError = failure.connectMessage(); loading = false }
+                .collect { page -> tracks = page; if (page.isNotEmpty()) loading = false }
             loading = false
         }
     }
 
     // Back leaves an open playlist before it leaves the tab.
-    BackHandler(enabled = selectedPlaylist != null) { selectedPlaylist = null; tracks = emptyList() }
+    BackHandler(enabled = selectedPlaylist != null) { selectedPlaylist = null; tracks = null }
 
     Column(Modifier.fillMaxSize()) {
         val open = selectedPlaylist
@@ -133,7 +146,7 @@ fun LibraryScreen(
                 Modifier.fillMaxWidth().padding(start = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { selectedPlaylist = null; tracks = emptyList() }) {
+                IconButton(onClick = { selectedPlaylist = null; tracks = null }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
                 Text(
@@ -230,13 +243,16 @@ private fun PlaylistTrackList(
     onLike: ((PlaylistTrack) -> Unit)?,
 ) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        // A null list has not arrived yet: showing the empty hint there tells the user their
+        // library is empty while it is still being fetched.
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
         }
-        list.isNullOrEmpty() -> LibraryNotice(emptyHint)
+        list.isEmpty() -> LibraryNotice(emptyHint)
         else -> LazyColumn(Modifier.fillMaxSize()) {
             itemsIndexed(list, key = { index, item -> "${item.source}:${item.videoId}:$index" }) { index, item ->
                 TrackRow(
+                    trackKey = item.videoId,
                     title = item.title,
                     subtitle = listOf(item.channelTitle, item.duration)
                         .filter { it.isNotBlank() }
@@ -255,12 +271,14 @@ private fun PlaylistTrackList(
 @Composable
 private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playlist) -> Unit) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
         }
-        list.isNullOrEmpty() -> LibraryNotice("no playlists found")
+        list.isEmpty() -> LibraryNotice("no playlists found")
         else -> LazyColumn(Modifier.fillMaxSize()) {
-            items(list, key = { it.id }) { playlist ->
+            // Keyed by position as well as id: a provider that repeats an item is not a reason
+            // for the list to throw at measure time.
+            itemsIndexed(list, key = { index, playlist -> "playlist:$index:${playlist.id}" }) { _, playlist ->
                 TrackRow(
                     title = playlist.title,
                     subtitle = playlist.owner?.let { "${playlist.itemCount} songs · $it" }
@@ -280,12 +298,12 @@ private fun ArtistList(
     onArtistSearch: (String) -> Unit,
 ) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
         }
-        list.isNullOrEmpty() -> LibraryNotice("no followed artists")
+        list.isEmpty() -> LibraryNotice("no followed artists")
         else -> LazyColumn(Modifier.fillMaxSize()) {
-            items(list, key = { it.browseId }) { artist ->
+            itemsIndexed(list, key = { index, artist -> "artist:$index:${artist.browseId}" }) { _, artist ->
                 TrackRow(
                     title = artist.name,
                     subtitle = artist.subtitle,

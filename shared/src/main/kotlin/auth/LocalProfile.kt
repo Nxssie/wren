@@ -43,6 +43,8 @@ data class SoundCloudSession(
     val obtainedAt: Long = System.currentTimeMillis(),
     val refreshToken: String? = null,
     val expiresAt: Long? = null,
+    /** The client that issued the session; a refresh has to come from the same one. */
+    val clientId: String? = null,
     val userId: Long? = null,
     val username: String? = null,
     val avatarUrl: String? = null,

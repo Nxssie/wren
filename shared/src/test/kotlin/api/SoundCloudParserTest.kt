@@ -181,4 +181,46 @@ class SoundCloudParserTest {
         assertEquals(1, result.size)
         assertEquals("Charted Track", result[0].title)
     }
+
+    @Test
+    fun `should flag a track that lists an encrypted rendition`() {
+        val raw = """
+            {
+                "id": 1,
+                "title": "Locked",
+                "permalink_url": "https://soundcloud.com/x/locked",
+                "streamable": true,
+                "policy": "MONETIZE",
+                "user": { "username": "x" },
+                "media": { "transcodings": [
+                    { "url": "u1", "format": { "protocol": "cbc-encrypted-hls", "mime_type": "audio/mp4" } },
+                    { "url": "u2", "format": { "protocol": "progressive", "mime_type": "audio/mpeg" } }
+                ] }
+            }
+        """.trimIndent()
+        val result = parseScTrack(json.parseToJsonElement(raw).jsonObject)!!
+
+        assertTrue(isProtectedStream(result.videoId))
+    }
+
+    @Test
+    fun `should not flag a track with only plain renditions`() {
+        val raw = """
+            {
+                "id": 2,
+                "title": "Open",
+                "permalink_url": "https://soundcloud.com/x/open",
+                "streamable": true,
+                "policy": "ALLOW",
+                "user": { "username": "x" },
+                "media": { "transcodings": [
+                    { "url": "u1", "format": { "protocol": "hls", "mime_type": "audio/mpeg" } },
+                    { "url": "u2", "format": { "protocol": "progressive", "mime_type": "audio/mpeg" } }
+                ] }
+            }
+        """.trimIndent()
+        val result = parseScTrack(json.parseToJsonElement(raw).jsonObject)!!
+
+        assertFalse(isProtectedStream(result.videoId))
+    }
 }

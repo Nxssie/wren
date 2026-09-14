@@ -5,7 +5,6 @@ import android.content.Context
 import android.os.Message
 import android.view.ViewGroup
 import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
@@ -25,44 +24,48 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import api.scClientId
 import auth.SoundCloudAuth
-import auth.SoundCloudOAuth
+import auth.SoundCloudWebSignIn
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import util.Log
 import util.connectMessage
+import kotlin.coroutines.resume
+
+private const val TAG = "SoundCloudLogin"
+
+/** How often to look for the token the page stores once the user is signed in. */
+private const val TOKEN_POLL_MS = 1_500L
 
 /**
- * SoundCloud's PKCE sign-in page in a WebView we control: the flow redirects to
- * `soundcloud.com/signin/callback?code=…`, which only a WebView can intercept (a Custom
- * Tab would just load it and lose the code). Mirrors desktop's SoundCloudLoginWindow,
- * including popup hosting for "Continue with Google/Apple", which SoundCloud opens with
- * `window.open()`.
+ * SoundCloud's ordinary sign-in page in a WebView we control, rather than the authorization page
+ * the PKCE flow drives: the sign-in needs no redirect interception, so the app simply reads the
+ * token the page keeps for itself once the user is in.
+ *
+ * Mirrors desktop's SoundCloudLoginWindow, including popup hosting for "Continue with
+ * Google/Apple", which SoundCloud opens with `window.open()`.
  */
 @Composable
 fun SoundCloudLoginScreen(onDone: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var request by remember { mutableStateOf<SoundCloudOAuth.AuthRequest?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var finishing by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        runCatching { SoundCloudOAuth.buildAuthRequest(scClientId()) }
-            .onSuccess { request = it }
-            .onFailure { error = it.connectMessage() }
-    }
-
-    fun deliver(code: String, req: SoundCloudOAuth.AuthRequest) {
+    fun deliver(session: SoundCloudWebSignIn.Session) {
         if (busy) return
         busy = true
         scope.launch {
-            runCatching { SoundCloudAuth.connect(SoundCloudOAuth.exchangeCode(code, req)) }
+            // Validation is the same call the pasted-token path uses, so a session that does not
+            // work is rejected here rather than stored and discovered later.
+            runCatching { SoundCloudAuth.connect(session.accessToken, session.refreshToken, session.clientId) }
                 .onSuccess { onDone() }
                 .onFailure {
+                    Log.w(TAG, "the session from the page was refused", it)
                     error = it.connectMessage()
                     busy = false
-                    finishing = false
                 }
         }
     }
@@ -101,21 +104,15 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
         }
 
         Text(
-            "// google_or_apple_popups_can_be_refused_by_the_provider — email_and_password_works;",
+            "// sign_in_as_usual — the_app_reads_the_session; google_or_apple_popups_may_be_refused;",
             color = PsSteel400,
             fontFamily = FontMono,
             fontSize = 10.sp,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
-        val activeRequest = request
-        if (activeRequest == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (error == null) CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
-            }
-        } else if (finishing) {
-            // The callback was caught: the authorization page must not stay visible
-            // while the token exchange runs in the background.
+        if (busy) {
+            // The token was found and is being validated; the page is dead weight from here.
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = PsIrisCyan, strokeWidth = 2.dp)
@@ -124,23 +121,7 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
                 }
             }
         } else {
-            SoundCloudWebView(
-                context = context,
-                request = activeRequest,
-                onCallbackUrl = { url ->
-                    finishing = true
-                    busy = true
-                    val code = runCatching { SoundCloudOAuth.parseCallback(url, activeRequest) }.getOrNull()
-                    if (code == null) {
-                        error = "Authorization failed — please try again"
-                        busy = false
-                        finishing = false
-                    } else {
-                        deliver(code, activeRequest)
-                    }
-                },
-                onCancel = onDone,
-            )
+            SoundCloudWebView(context = context, onToken = ::deliver, onCancel = onDone)
         }
     }
 }
@@ -149,14 +130,13 @@ fun SoundCloudLoginScreen(onDone: () -> Unit) {
 @Composable
 private fun SoundCloudWebView(
     context: Context,
-    request: SoundCloudOAuth.AuthRequest,
-    onCallbackUrl: (String) -> Unit,
+    onToken: (SoundCloudWebSignIn.Session) -> Unit,
     onCancel: () -> Unit,
 ) {
-    val callback by rememberUpdatedState(onCallbackUrl)
+    val deliver by rememberUpdatedState(onToken)
     val cancel by rememberUpdatedState(onCancel)
     val popups = remember { mutableStateListOf<WebView>() }
-    val holder = remember(request) {
+    val holder = remember {
         CookieManager.getInstance().apply {
             // DataDome pins its verdict to a cookie, so a challenge from a previous attempt
             // would follow every retry. Nothing else in the app needs WebView cookies.
@@ -164,7 +144,7 @@ private fun SoundCloudWebView(
             flush()
             setAcceptCookie(true)
         }
-        WebLoginWebViews(context, request, { url -> callback(url) }, popups)
+        WebLoginWebViews(context, popups)
     }
 
     BackHandler(enabled = true) {
@@ -172,6 +152,32 @@ private fun SoundCloudWebView(
     }
 
     DisposableEffect(holder) { onDispose { holder.destroy() } }
+
+    // Polled rather than driven by a callback: there is no redirect to hook any more, and the
+    // page stores the token asynchronously as whatever it does after the user is signed in.
+    LaunchedEffect(holder) {
+        while (isActive) {
+            delay(TOKEN_POLL_MS)
+            // Both cookies come from the same exchange, and the jar belongs to the origin the flow
+            // actually used, which is m.soundcloud.com rather than soundcloud.com.
+            val jars = listOf("https://soundcloud.com", "https://m.soundcloud.com")
+                .map { CookieManager.getInstance().getCookie(it) }
+            fun cookie(name: String) = jars.firstNotNullOfOrNull { SoundCloudWebSignIn.tokenFromCookies(it, name) }
+
+            val access = holder.main.storedToken() ?: cookie(SoundCloudWebSignIn.TOKEN_KEY)
+            if (access != null) {
+                val refresh = cookie(SoundCloudWebSignIn.REFRESH_TOKEN_KEY)
+                Log.i(
+                    TAG,
+                    "session found (access ${access.length} chars, refresh " +
+                        "${if (refresh == null) "absent" else "${refresh.length} chars"}, " +
+                        "client ${holder.authClientId ?: "unknown"})"
+                )
+                deliver(SoundCloudWebSignIn.Session(access, refresh, holder.authClientId))
+                return@LaunchedEffect
+            }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { holder.main }, modifier = Modifier.fillMaxSize())
@@ -183,16 +189,27 @@ private fun SoundCloudWebView(
     }
 }
 
-/** The authorization page plus any provider popups, sharing one callback interceptor. */
+/** `evaluateJavascript` answers on the main thread, so wait for it rather than blocking one. */
+private suspend fun WebView.storedToken(): String? = suspendCancellableCoroutine { cont ->
+    evaluateJavascript(SoundCloudWebSignIn.TOKEN_SCRIPT) { raw ->
+        if (cont.isActive) cont.resume(SoundCloudWebSignIn.tokenFromJsResult(raw))
+    }
+}
+
+/**
+ * The sign-in page plus any provider popups. There is no callback to catch now, so this only has
+ * to keep the popups alive and report what the page turned out to be — which is what tells a
+ * challenge apart from a sign-in that simply has not been completed yet.
+ */
 private class WebLoginWebViews(
     private val context: Context,
-    private val request: SoundCloudOAuth.AuthRequest,
-    private val onCallbackUrl: (String) -> Unit,
     private val popups: MutableList<WebView>,
 ) {
-    private var delivered = false
-
     val main: WebView = create()
+
+    /** The client that ran the sign-in, captured off the authorize URL on the way past. */
+    var authClientId: String? = null
+        private set
 
     fun destroy() {
         popups.forEach { runCatching { it.destroy() } }
@@ -212,22 +229,17 @@ private class WebLoginWebViews(
         settings.domStorageEnabled = true
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
-        // SoundCloud's auth sits behind DataDome, whose device check compares the UA with
-        // the real engine and device: the desktop Safari UA that fits desktop's WebKit view
-        // fails here on Chromium plus touch screen and the email step dies with a generic
-        // error. Keep the true mobile Chrome UA and only drop the "wv" marker that flags an
-        // embedded WebView, which Google's popup refuses.
+        // Keep the true mobile Chrome UA and drop only the "wv" marker that flags an embedded
+        // WebView: the device check compares the UA with the real engine and device, and Google's
+        // popup refuses anything advertising itself as embedded.
         settings.userAgentString = browserUserAgent(settings.userAgentString)
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
         webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, req: WebResourceRequest?): Boolean =
-                req?.url?.toString()?.let { handle(it) } ?: false
-
-            // JS-driven redirects (provider popups post back to the opener) can bypass
-            // shouldOverrideUrlLoading, so the already-loaded location counts too.
-            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
-                url?.let { handle(it) }
+            override fun onPageFinished(view: WebView?, url: String?) {
+                SoundCloudWebSignIn.clientIdFromAuthUrl(url)?.let { authClientId = it }
+                // The query is left off on purpose: the callback carries an authorization code.
+                Log.i(TAG, "loaded ${url?.substringBefore('?')} — title=\"${view?.title}\"")
             }
         }
 
@@ -257,21 +269,7 @@ private class WebLoginWebViews(
             }
         }
 
-        loadUrl(request.url)
-    }
-
-    /** True when the URL was our callback and must not be loaded as a page. */
-    private fun handle(url: String): Boolean {
-        if (!url.startsWith(SoundCloudOAuth.REDIRECT_URI)) return false
-        // Whatever page shows the callback (main or popup) is dead weight from here on —
-        // otherwise it stays blank white and looks like a hang.
-        popups.forEach { runCatching { it.destroy() } }
-        popups.clear()
-        if (!delivered) {
-            delivered = true
-            onCallbackUrl(url)
-        }
-        return true
+        loadUrl(SoundCloudWebSignIn.SIGN_IN_URL)
     }
 
     private companion object {

@@ -1,6 +1,7 @@
 package com.wren.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,8 +22,8 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
@@ -34,25 +35,28 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
+import api.YouTubeLikes
 import auth.AuthEvents
 import util.ThemePreference
 import player.PlayerEngine
 import provider.Platform
 import provider.Providers
 
+/**
+ * The bottom bar, in the order it is drawn. Now Playing is deliberately not one of them: it opens
+ * from the player bar or from the item that is already playing, and lives above the tabs.
+ */
 private enum class WrenTab(val code: String, val icon: ImageVector) {
+    HOME("HOM", Icons.Default.Home),
     SEARCH("SCH", Icons.Default.Search),
-    DISCOVER("DSC", Icons.Default.Explore),
-    LIBRARY("LIB", Icons.Default.LibraryMusic),
-    NOW_PLAYING("NOW", Icons.Default.PlayCircleFilled);
-
-    /** Browse tabs are scoped to the active platform; Now Playing is the shared queue. */
-    val browsesPlatform: Boolean get() = this != NOW_PLAYING
+    EXPLORE("EXP", Icons.Default.Explore),
+    LIBRARY("LIB", Icons.Default.LibraryMusic)
 }
 
 /**
@@ -62,44 +66,55 @@ private enum class WrenTab(val code: String, val icon: ImageVector) {
 @Composable
 fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     // Saved, not just remembered: a system-initiated recreate (dark mode, locale, font scale)
-    // or a restore after process death used to drop the user back on Search.
-    var tab by rememberSaveable { mutableStateOf(WrenTab.SEARCH) }
+    // or a restore after process death used to drop the user back on the first tab.
+    var tab by rememberSaveable { mutableStateOf(WrenTab.HOME) }
     // Tabs visited so far, so the system back gesture retraces steps instead of quitting.
     val tabHistory = rememberSaveable(saver = TabHistorySaver) { mutableStateListOf<WrenTab>() }
+    // The player is a screen above the tabs rather than a tab of its own; [playerHasReturn]
+    // separates a tap from inside the app, where back closes it, from a widget tap on a cold
+    // start, where there is nothing behind the player and back should leave the app.
+    var showPlayer by rememberSaveable { mutableStateOf(false) }
+    var playerHasReturn by rememberSaveable { mutableStateOf(false) }
     fun navigate(target: WrenTab) {
+        showPlayer = false
         if (target == tab) return
         tabHistory.remove(target)
         tabHistory.add(tab)
         tab = target
+    }
+    fun openPlayer(fromInside: Boolean) {
+        playerHasReturn = fromInside
+        showPlayer = true
     }
     var platform by rememberSaveable { mutableStateOf(Platform.YOUTUBE) }
     var showAccounts by remember { mutableStateOf(false) }
     var showSoundcloudLogin by remember { mutableStateOf(false) }
     // Set when an artist is tapped in the Library; SearchScreen picks it up and searches.
     var artistSearchName by remember { mutableStateOf<String?>(null) }
-    // Set by a tap on the player bar while already on Now Playing, where there is no tab to
-    // switch to: the queue sheet is the thing that tap should open.
-    val showQueue = remember { mutableStateOf(false) }
     val authVersion by AuthEvents.version.collectAsState()
     val provider = remember(platform) { Providers.of(platform) }
 
     // Likes follow the SoundCloud session: load on start, reload/clear on sign in/out.
-    LaunchedEffect(authVersion) { SoundCloudLikes.refresh() }
+    LaunchedEffect(authVersion) {
+        SoundCloudLikes.refresh()
+        YouTubeLikes.reset()
+    }
 
-    // A tap on the widget means "show me what is playing". At a cold start there is nothing to
-    // go back to, so it becomes the entry tab; otherwise it is pushed, so back returns to
-    // whatever the user was doing. The overlays sit above the tabs, so they have to close
-    // first or the request would land behind whichever one was open.
+    // A tap on the widget means "show me what is playing". Only a request made from inside the
+    // app gets somewhere to go back to, so the cold start that raised it leaves on back. The
+    // overlays sit above the tabs, so they have to close first or the request would land behind
+    // whichever one was open.
     LaunchedEffect(openNowPlaying.value) {
         if (!openNowPlaying.value) return@LaunchedEffect
         showAccounts = false
         showSoundcloudLogin = false
-        if (tabHistory.isEmpty()) tab = WrenTab.NOW_PLAYING else navigate(WrenTab.NOW_PLAYING)
+        openPlayer(fromInside = tabHistory.isNotEmpty())
         openNowPlaying.value = false
     }
 
     // Outermost back handler: screens register their own (collapse sheet, leave playlist,
-    // close login) and win while enabled; this one only runs once those are exhausted.
+    // close login) and win while enabled; this one only runs once those are exhausted. The
+    // player's own handler is declared with the player, so it outranks the tab underneath.
     BackHandler(enabled = tabHistory.isNotEmpty()) { tab = tabHistory.removeAt(tabHistory.lastIndex) }
 
     WrenTheme {
@@ -108,27 +123,28 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
             topBar = {
                 AppHeader(
                     platform = platform,
-                    showPlatform = tab.browsesPlatform,
                     onPlatformChange = { platform = it; artistSearchName = null },
                     onOpenAccounts = { showAccounts = true },
+                    // The player is not a browse surface: the switcher would change nothing on it.
+                    showPlatform = !showPlayer,
                 )
             },
             bottomBar = {
                 Column {
-                    PlayerBar(engine) {
-                        if (tab == WrenTab.NOW_PLAYING) showQueue.value = true else navigate(WrenTab.NOW_PLAYING)
+                    // Hidden while the player itself is open: the collapsed sheet at the bottom of
+                    // that screen already carries the same track and expands on a tap, so a second
+                    // copy would only repeat it in less detail.
+                    if (!showPlayer) {
+                        PlayerBar(engine) { openPlayer(fromInside = true) }
                     }
-                    BottomNav(
-                        selected = tab,
-                        discoverLabel = provider.discoverLabel,
-                        onSelect = ::navigate,
-                    )
+                    BottomNav(selected = tab, onSelect = ::navigate)
                 }
             },
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
                 // Re-key on auth changes so screens re-run with the new session.
                 when (tab) {
+                    WrenTab.HOME -> key(platform, authVersion) { HomeScreen(provider, engine) }
                     WrenTab.SEARCH -> key(platform, authVersion) {
                         SearchScreen(
                             provider = provider,
@@ -137,7 +153,7 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
                             onSeedConsumed = { artistSearchName = null },
                         )
                     }
-                    WrenTab.DISCOVER -> key(platform, authVersion) { DiscoverScreen(provider, engine) }
+                    WrenTab.EXPLORE -> key(platform, authVersion) { ExploreScreen(provider, engine) }
                     WrenTab.LIBRARY -> key(platform, authVersion) {
                         LibraryScreen(
                             provider = provider,
@@ -145,7 +161,21 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
                             onArtistSearch = { artistSearchName = it; navigate(WrenTab.SEARCH) },
                         )
                     }
-                    WrenTab.NOW_PLAYING -> NowPlayingScreen(engine, showQueue)
+                }
+
+                // The player draws over the tab instead of replacing it, so closing it returns to
+                // whatever the tab had open — a playlist, a search, a scroll position. It owns the
+                // tab's part of the layout either way, painting its own opaque background.
+                if (showPlayer) {
+                    // Declared here, after the tab, so it answers back before any handler the tab
+                    // registered: what is on screen is the player, so that is what back closes.
+                    BackHandler(enabled = playerHasReturn) { showPlayer = false }
+                    // Handles taps itself so none reach the tab behind it. The player's own layers
+                    // leave a band uncovered mid-drag, between the compact header and the sheet,
+                    // and without this a tap there would land on whatever the tab has at that spot.
+                    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
+                        NowPlayingScreen(engine)
+                    }
                 }
             }
         }
@@ -183,9 +213,9 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
 @Composable
 private fun AppHeader(
     platform: Platform,
-    showPlatform: Boolean,
     onPlatformChange: (Platform) -> Unit,
     onOpenAccounts: () -> Unit,
+    showPlatform: Boolean,
 ) {
     Column(Modifier.fillMaxWidth().background(Chrome)) {
         Row(
@@ -206,6 +236,8 @@ private fun AppHeader(
                 Icon(Icons.Default.AccountCircle, contentDescription = "Accounts", tint = TextPrimary)
             }
         }
+        // Every browse tab works on the active platform, so the switcher is always one gesture
+        // away there; the player hides it, since it has no platform to switch.
         if (showPlatform) {
             SectionLabel("_platform;", Modifier.padding(start = 16.dp, bottom = 6.dp))
             PlatformSwitcher(
@@ -259,17 +291,17 @@ private fun ThemeToggle() {
  * cyan accent rect marking the active tab — the same cue the desktop NavItem uses.
  */
 @Composable
-private fun BottomNav(selected: WrenTab, discoverLabel: String, onSelect: (WrenTab) -> Unit) {
+private fun BottomNav(selected: WrenTab, onSelect: (WrenTab) -> Unit) {
     Column(Modifier.fillMaxWidth().background(Chrome)) {
         Divider(color = HairlineSoft, thickness = 1.dp)
         Row(Modifier.fillMaxWidth()) {
             WrenTab.entries.forEach { candidate ->
                 val active = candidate == selected
                 val label = when (candidate) {
+                    WrenTab.HOME -> "home"
                     WrenTab.SEARCH -> "search"
-                    WrenTab.DISCOVER -> discoverLabel
+                    WrenTab.EXPLORE -> "explore"
                     WrenTab.LIBRARY -> "library"
-                    WrenTab.NOW_PLAYING -> "now playing"
                 }
                 Column(
                     Modifier

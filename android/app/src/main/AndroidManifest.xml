@@ -29,5 +29,19 @@
             android:name=".playback.WrenPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Home-screen playback widget. exported=false: the system delivers APPWIDGET_UPDATE
+             to the component directly, so nothing else needs to reach the receiver. -->
+        <receiver
+            android:name=".widget.WrenWidgetReceiver"
+            android:exported="false"
+            android:label="@string/wren_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/wren_widget_info" />
+        </receiver>
     </application>
 </manifest>

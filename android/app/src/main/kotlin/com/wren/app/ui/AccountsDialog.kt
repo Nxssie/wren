@@ -20,6 +20,7 @@ import auth.AuthEvents
 import auth.AuthStore
 import auth.GoogleAuth
 import auth.SoundCloudAuth
+import util.DownloadPreference
 import auth.loadCredentials
 import util.connectMessage
 import auth.runGoogleLogin
@@ -149,7 +150,7 @@ fun AccountsDialog(
                             shape = RoundedCornerShape(0.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("sign_in_with_browser;", color = Background, fontFamily = FontMono, fontSize = 12.sp)
+                            Text("sign_in_to_soundcloud;", color = Background, fontFamily = FontMono, fontSize = 12.sp)
                         }
                         Spacer(Modifier.height(10.dp))
                         Text("// or_paste_token_manually;", color = PsSteel400, fontFamily = FontMono, fontSize = 10.sp)
@@ -182,6 +183,26 @@ fun AccountsDialog(
                             Text("connect;", color = Background, fontFamily = FontMono, fontSize = 12.sp)
                         }
                     }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("_save_downloads;", color = PsSteel400, fontFamily = FontMono, fontSize = 10.sp)
+                        Text(
+                            "// off_by_default — saving_whole_files_is_what_gets_a_client_id_rotated;",
+                            color = PsSteel400,
+                            fontFamily = FontMono,
+                            fontSize = 9.sp,
+                        )
+                    }
+                    Switch(
+                        checked = allowSoundCloudDownloads,
+                        onCheckedChange = {
+                            allowSoundCloudDownloads = it
+                            DownloadPreference.save(it)
+                        },
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))

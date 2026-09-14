@@ -1,10 +1,12 @@
 package api
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import util.Http
 import util.Log
+import util.runCatchingExceptCancellation
 import java.net.URLEncoder
 
 /**
@@ -15,12 +17,12 @@ import java.net.URLEncoder
  * default yt-dlp uses, then ANDROID_VR and IOS. Every call carries a visitor id fetched
  * from the YouTube homepage — without it the request is answered with "sign in to confirm
  * you're not a bot" for a good share of music videos. SoundCloud uses the public
- * progressive transcoding of a track.
+ * progressive transcoding of a track, or its HLS rendition when that is all it offers.
  */
 class HttpStreamResolver : StreamResolver {
 
     override suspend fun resolve(trackKey: String): String? =
-        if (isSoundCloud(trackKey)) soundCloudProgressive(trackKey) else youTubeAudio(trackKey)
+        if (isSoundCloud(trackKey)) soundCloudStream(trackKey) else youTubeAudio(trackKey)
 
     /**
      * Tries each InnerTube client in order and keeps the first one that hands back a plain
@@ -114,26 +116,77 @@ class HttpStreamResolver : StreamResolver {
     private fun boundIp(url: String): String =
         Regex("[?&]ip=([^&]+)").find(url)?.groupValues?.get(1)?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: "?"
 
-    private suspend fun soundCloudProgressive(permalink: String): String? = withContext(Dispatchers.IO) {
-        runCatching {
-            val clientId = scClientId()
-            val resolved = Http.get(
-                "https://api-v2.soundcloud.com/resolve?url=${URLEncoder.encode(permalink, "UTF-8")}&client_id=$clientId",
-                headers = mapOf("User-Agent" to SC_UA),
-            )
-            if (!resolved.isSuccessful) return@runCatching null
-            val track = SC_JSON.parseToJsonElement(resolved.body).jsonObject
-            val transcodings = track["media"]?.jsonObject?.get("transcodings")?.jsonArray ?: return@runCatching null
-            val transcodeUrl = transcodings.firstNotNullOfOrNull { t ->
-                val obj = t.jsonObject
-                if (obj["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.content != "progressive") return@firstNotNullOfOrNull null
-                obj["url"]?.jsonPrimitive?.content
-            } ?: return@runCatching null
+    private suspend fun soundCloudStream(permalink: String): String? = withContext(Dispatchers.IO) {
+        // Not `runCatching`: that also swallows CancellationException, so changing track mid-resolve
+        // came back as "no stream" and the caller skipped a second time on top of the one that
+        // cancelled it.
+        runCatchingExceptCancellation {
+            val track = scApiGet("/resolve?url=${URLEncoder.encode(permalink, "UTF-8")}", permalink)
+                ?: return@runCatchingExceptCancellation null
 
-            val stream = Http.get("$transcodeUrl?client_id=$clientId", headers = mapOf("User-Agent" to SC_UA))
-            if (!stream.isSuccessful) return@runCatching null
-            SC_JSON.parseToJsonElement(stream.body).jsonObject["url"]?.jsonPrimitive?.content
-        }.onFailure { Log.e("HttpStreamResolver", "SoundCloud stream failed for $permalink", it) }.getOrNull()
+            val transcodings = track["media"]?.jsonObject?.get("transcodings")?.jsonArray
+                ?.mapNotNull { it as? JsonObject }
+                ?: return@runCatchingExceptCancellation null
+            // Content protection is decided from the listing: the plain renditions such a track
+            // still lists answer 404, so there is no point paying the media call to find out.
+            val offered = transcodings.mapNotNull { it.protocol() }
+            if (soundCloudProtected(offered)) throw ProtectedStreamException(permalink)
+            // Progressive first: one file, seekable by byte range. Otherwise the plain HLS
+            // rendition, which is what newer uploads offer instead.
+            val streamUrl = transcodings.pick("progressive") ?: transcodings.pick("hls")
+            if (streamUrl == null) {
+                Log.w("HttpStreamResolver", "no playable transcoding for $permalink (offered: $offered)")
+                return@runCatchingExceptCancellation null
+            }
+
+            scApiGet(streamUrl, permalink)?.get("url")?.jsonPrimitive?.contentOrNull
+        }.onFailure {
+            if (it !is ProtectedStreamException) Log.e("HttpStreamResolver", "SoundCloud stream failed for $permalink", it)
+        }.getOrElse { if (it is ProtectedStreamException) throw it else null }
+    }
+
+    private fun JsonObject.protocol(): String? =
+        this["format"]?.jsonObject?.get("protocol")?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.mimeType(): String =
+        this["format"]?.jsonObject?.get("mime_type")?.jsonPrimitive?.contentOrNull.orEmpty()
+
+    /** The transcoding URL for [protocol], MP3 renditions ahead of Opus: every decoder plays MP3. */
+    private fun List<JsonObject>.pick(protocol: String): String? =
+        filter { it.protocol() == protocol }
+            .sortedBy { if (it.mimeType().startsWith("audio/mpeg")) 0 else 1 }
+            .firstNotNullOfOrNull { it["url"]?.jsonPrimitive?.contentOrNull }
+
+    /**
+     * A GET carrying the scraped client id, retried once when the id is what got refused.
+     *
+     * That id is cached for six hours and is the only thing authenticating these calls, so a
+     * stale one fails every stream for the rest of the cache window — while the library path,
+     * which re-scrapes on a 401, recovers on its own. Same signal, same response here.
+     */
+    private suspend fun scApiGet(path: String, what: String): JsonObject? {
+        val base = if (path.startsWith("http")) path else "https://api-v2.soundcloud.com$path"
+        val separator = if ('?' in base) "&" else "?"
+
+        repeat(2) { attempt ->
+            val response = runCatchingExceptCancellation {
+                Http.get("$base${separator}client_id=${scClientId()}", headers = mapOf("User-Agent" to SC_UA))
+            }.getOrNull()
+
+            if (response == null) {
+                // A connection that never got there is the other thing worth a second try.
+                Log.w("HttpStreamResolver", "$what could not be reached (attempt ${attempt + 1})")
+            } else if (response.isSuccessful) {
+                return runCatching { SC_JSON.parseToJsonElement(response.body).jsonObject }.getOrNull()
+            } else {
+                Log.w("HttpStreamResolver", "$what returned ${response.code} (attempt ${attempt + 1})")
+                if (response.code !in 401..403 && response.code < 500) return null
+                if (response.code in 401..403) invalidateClientId()
+            }
+
+            if (attempt == 0) delay(300)
+        }
+        return null
     }
 
     private data class InnerTubeClient(

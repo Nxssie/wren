@@ -3,6 +3,7 @@ package com.wren.app.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.CircularProgressIndicator
@@ -10,14 +11,18 @@ import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
+import api.protectedStreams
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,12 +70,19 @@ fun TrackRow(
     downloadState: DownloadManager.State? = null,
     liked: Boolean? = null,
     onLike: (() -> Unit)? = null,
+    /** The key [resolveStreamUrl] takes; lets the row refuse a track known to be protected. */
+    trackKey: String? = null,
 ) {
+    val protected by protectedStreams.collectAsState()
+    // Known to be served only encrypted: shown dimmed with a lock, and not playable at all,
+    // which is clearer than a skip that flashes past on the bar.
+    val unavailable = trackKey != null && trackKey in protected
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .clickable(enabled = !unavailable, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .alpha(if (unavailable) 0.45f else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Artwork(artworkUrl, Modifier.size(48.dp))
@@ -96,6 +108,14 @@ fun TrackRow(
         }
         if (trailingLabel != null) {
             Text(trailingLabel, color = PsSteel400, fontFamily = FontMono, fontSize = 12.sp)
+        }
+        if (unavailable) {
+            Icon(
+                Icons.Default.Lock,
+                contentDescription = "Encrypted on SoundCloud, cannot play",
+                tint = TextSecondary,
+                modifier = Modifier.padding(horizontal = 12.dp).size(18.dp),
+            )
         }
         if (onLike != null) LikeButton(liked == true, onLike)
         if (onDownload != null) DownloadButton(downloadState, onDownload)

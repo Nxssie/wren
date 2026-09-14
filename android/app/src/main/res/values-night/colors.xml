@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="wren_widget_bg">#E6242429</color>
+    <color name="wren_widget_text">#FFFFFFFF</color>
+    <color name="wren_widget_placeholder">#FF3A3A42</color>
+</resources>

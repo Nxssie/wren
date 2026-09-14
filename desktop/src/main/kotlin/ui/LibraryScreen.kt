@@ -24,6 +24,9 @@ import models.Playlist
 import models.PlaylistTrack
 import api.resolveStreamUrl
 import provider.MusicProvider
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import player.FFmpegPlayer
 import models.toQueueItem
@@ -54,7 +57,7 @@ fun LibraryScreen(
     var playlists by remember { mutableStateOf<List<Playlist>?>(null) }
     var artists by remember { mutableStateOf<List<ArtistResult>?>(null) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
-    var tracks by remember { mutableStateOf<List<PlaylistTrack>>(emptyList()) }
+    var tracks by remember { mutableStateOf<List<PlaylistTrack>?>(null) }
     var loading by remember { mutableStateOf(false) }
     // A fetch that failed leaves its list null and shows this instead: an empty list is a fact
     // the user cannot tell apart from a request that never arrived.
@@ -63,6 +66,7 @@ fun LibraryScreen(
     var artistsError by remember { mutableStateOf<String?>(null) }
     var tracksError by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableStateOf(0) }
+    var tracksJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
 
     if (!provider.supportsLibrary) {
@@ -81,11 +85,18 @@ fun LibraryScreen(
     LaunchedEffect(tab, retry) {
         if (tab == LibraryTab.SONGS && songs == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.librarySongs() }
-            songs = result.getOrNull()
-            songsError = result.exceptionOrNull()?.connectMessage()
+            var prefetched = false
+            provider.librarySongsFlow()
+                .catch { failure -> songsError = failure.connectMessage(); loading = false }
+                .collect { page ->
+                    songs = page
+                    if (page.isNotEmpty()) loading = false
+                    if (!prefetched) {
+                        prefetched = true
+                        page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
+                }
             loading = false
-            songs?.take(8)?.forEach { launch { resolveStreamUrl(it.videoId) } }
         }
         if (tab == LibraryTab.PLAYLISTS && playlists == null) {
             loading = true
@@ -96,21 +107,29 @@ fun LibraryScreen(
         }
         if (tab == LibraryTab.ARTISTS && artists == null) {
             loading = true
-            val result = runCatchingExceptCancellation { provider.libraryArtists() }
-            artists = result.getOrNull()
-            artistsError = result.exceptionOrNull()?.connectMessage()
+            provider.libraryArtistsFlow()
+                .catch { failure -> artistsError = failure.connectMessage(); loading = false }
+                .collect { page -> artists = page; if (page.isNotEmpty()) loading = false }
             loading = false
         }
     }
 
     fun loadPlaylistTracks(playlist: Playlist) {
-        scope.launch {
+        tracksJob?.cancel()
+        tracksJob = scope.launch {
             loading = true
-            val result = runCatchingExceptCancellation { provider.playlistTracks(playlist.id) }
-            tracks = result.getOrNull().orEmpty()
-            tracksError = result.exceptionOrNull()?.connectMessage()
+            var prefetched = false
+            provider.playlistTracksFlow(playlist.id)
+                .catch { failure -> tracksError = failure.connectMessage(); loading = false }
+                .collect { page ->
+                    tracks = page
+                    if (page.isNotEmpty()) loading = false
+                    if (!prefetched) {
+                        prefetched = true
+                        page.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
+                }
             loading = false
-            tracks.take(8).forEach { launch { resolveStreamUrl(it.videoId) } }
         }
     }
 
@@ -131,7 +150,7 @@ fun LibraryScreen(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { selectedPlaylist = null; tracks = emptyList() }) {
+                IconButton(onClick = { selectedPlaylist = null; tracks = null }) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                 }
                 Spacer(Modifier.width(4.dp))
@@ -139,13 +158,14 @@ fun LibraryScreen(
             }
             if (tracksError != null) {
                 LibraryError(tracksError!!) { loadPlaylistTracks(openPlaylist) }
-            } else if (loading) {
+            } else if (loading || tracks == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = PsInk900)
                 }
             } else {
+                val loaded = tracks.orEmpty()
                 LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                    items(tracks.size) { index -> PlaylistTrackRow(tracks[index], index, tracks, player) }
+                    items(loaded.size) { index -> PlaylistTrackRow(loaded[index], index, loaded, player) }
                 }
             }
             return@Column
@@ -232,11 +252,13 @@ private fun LibraryTabs(
 
 @Composable
 private fun TrackList(list: List<PlaylistTrack>?, loading: Boolean, player: FFmpegPlayer, emptyHint: String) {
-    if (loading) {
+    // A null list has not arrived yet: showing the empty hint there tells the user their library
+    // is empty while it is still being fetched.
+    if (loading || list == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsInk900)
         }
-    } else if (list.isNullOrEmpty()) {
+    } else if (list.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(emptyHint, color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
@@ -250,10 +272,10 @@ private fun TrackList(list: List<PlaylistTrack>?, loading: Boolean, player: FFmp
 @Composable
 private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playlist) -> Unit) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsInk900)
         }
-        list.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("// no_playlists_found;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
         else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -265,10 +287,10 @@ private fun PlaylistList(list: List<Playlist>?, loading: Boolean, onOpen: (Playl
 @Composable
 private fun ArtistList(list: List<ArtistResult>?, loading: Boolean, onArtistClick: (browseId: String, name: String) -> Unit) {
     when {
-        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        loading || list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = PsInk900)
         }
-        list.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        list.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("// no_followed_artists;", color = PsSteel400, fontSize = 14.sp, fontFamily = FontMono)
         }
         else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 4.dp)) {

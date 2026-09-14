@@ -17,11 +17,30 @@
   <img src="https://img.shields.io/badge/UI-Compose%20Multiplatform-4285F4.svg" alt="Compose Multiplatform">
 </p>
 
+> ## Read this first
+>
+> **Wren is for private, personal use, and it is not affiliated with, endorsed by, or permitted by
+> YouTube, Google, or SoundCloud.** It talks to undocumented internal endpoints, scrapes the public
+> client id those web players use, and reads the SoundCloud session out of its own WebView after you
+> sign in. All of that is against those services' terms of use.
+>
+> It is published so it can be read and run by whoever chooses to, **each person on their own
+> account and at their own risk.** Using it can get an account suspended or a client id blocked, and
+> nobody but you is responsible for that.
+>
+> In particular, do not treat it as a downloader. Saving SoundCloud tracks is off unless you turn it
+> on, because fetching whole files is the behaviour those services actually police — it is what gets
+> a client id rotated, and it degrades the app for everyone using it.
+>
+> No credentials ship with this repo. Bring your own API keys and your own accounts. If you fork
+> this, that warning is yours to keep and to pass on.
+
+
 ## Features
 
 - Search songs across YouTube Music, YouTube, and SoundCloud simultaneously, results interleaved and sortable by popularity, duration, or source
 - SoundCloud Station: start a radio of related tracks from any SoundCloud result
-- Discover per platform: SoundCloud "Made for you" mixes, curated and trending selections plus a weekly list generated from your listening history; YouTube radios seeded by your recent plays
+- Discover per platform: SoundCloud "Made for you" mixes, curated and trending selections plus a weekly list generated from your listening history; YouTube Home built from the artists you follow (new releases) and the tracks you play here (quick picks)
 - Artist pages with top songs, albums, singles, and EPs
 - Queue playback with automatic prefetching of upcoming tracks
 - Download SoundCloud tracks as local audio files (mp3/m4a) straight from the search results
@@ -30,6 +49,7 @@
 - Now Playing screen with synced/plain lyrics (from [lrclib.net](https://lrclib.net)) and resizable queue panel
 - Dark/light theme toggle in the sidebar
 - Persistent player bar with seek, volume, and queue controls
+- Android home-screen widget: now playing with play/pause and skip, driven by the same playback service
 - Stream URL resolution via `yt-dlp` (bundled in AppImage, or available in PATH)
 - 4-hour stream URL cache for YouTube, 20-minute cache for SoundCloud progressive streams
 
