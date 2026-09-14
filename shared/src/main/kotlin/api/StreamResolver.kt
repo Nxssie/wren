@@ -32,6 +32,15 @@ fun warmupStreamConnection() {
     }.also { it.isDaemon = true }.start()
 }
 
+/**
+ * Drops the cached URL for [trackKey], so the next resolve goes to the network. For after a
+ * playback error: YouTube URLs are bound to the IP that asked for them and stop working when the
+ * phone changes network, well before their TTL runs out.
+ */
+fun forgetStreamUrl(trackKey: String) {
+    urlCache.remove(trackKey)
+}
+
 suspend fun resolveStreamUrl(trackKey: String): String? {
     val cached = urlCache[trackKey]
     if (cached != null && System.currentTimeMillis() - cached.fetchedAt < cached.ttlMs) {

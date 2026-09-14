@@ -10,7 +10,9 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import api.SoundCloudLikes
 import api.YouTubeLikes
 import api.StreamRequestHeaders
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import util.Http
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -19,6 +21,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import api.ListeningHistory
+import api.forgetStreamUrl
 import api.resolveStreamUrl
 import api.warmupStreamConnection
 import com.wren.app.playback.WrenPlaybackService
@@ -106,7 +109,18 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
                         if (userAgent == null) spec else spec.withAdditionalHeaders(mapOf("User-Agent" to userAgent))
                     }
                 },
-            ),
+            )
+                // The default gives up on a chunk after three tries, which on a patchy mobile
+                // link is a few seconds of bad signal. Each retry backs off up to five seconds.
+                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(LOAD_RETRIES)),
+        )
+        // Audio is cheap to hold: buffer minutes ahead while the signal is there so a dead spot
+        // plays through instead of stalling. Time thresholds win over the default byte cap.
+        .setLoadControl(
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, PLAYBACK_BUFFER_MS, REBUFFER_MS)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build(),
         )
         .setAudioAttributes(
             AudioAttributes.Builder()
@@ -154,6 +168,10 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
     private var consecutiveLoadFailures = 0
     private val maxConsecutiveLoadFailures = 3
 
+    /** Network retries spent on the current item; reset by any load that is not a retry. */
+    private var sameTrackRetries = 0
+    private var retryJob: Job? = null
+
     /**
      * Position to start from the next time the current item is loaded. Set on restore (the
      * stream is not resolved until the user presses play, so launch costs no network and
@@ -186,6 +204,7 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
             override fun onPlayerError(error: PlaybackException) {
                 Log.e("ExoPlayerEngine", "Playback error for ${current()?.videoId}", error)
                 _lastError.value = "playback failed: ${error.errorCodeName.removePrefix("ERROR_CODE_").lowercase()}"
+                if (isNetworkError(error) && retrySameTrack()) return
                 consecutiveLoadFailures++
                 if (consecutiveLoadFailures > maxConsecutiveLoadFailures) {
                     Log.e("ExoPlayerEngine", "Giving up after $consecutiveLoadFailures consecutive failures")
@@ -388,8 +407,45 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         }
     }
 
-    private fun playIndex(index: Int, startAtSec: Double = 0.0) {
+    /**
+     * A dropped connection is not a bad track. Instead of skipping, wait for the signal to come
+     * back, then reload the same item where it stopped — with a fresh URL, since the old one may
+     * be bound to the network the phone just left. Skipping only happens once the budget is spent.
+     */
+    private fun retrySameTrack(): Boolean {
+        val item = current() ?: return false
+        if (sameTrackRetries >= RETRY_DELAYS_MS.size) return false
+        val attempt = sameTrackRetries++
+        val resumeAt = maxOf(_position.value, player.currentPosition.coerceAtLeast(0) / 1000.0)
+        Log.w("ExoPlayerEngine", "network error on ${item.videoId}; retry ${attempt + 1}/${RETRY_DELAYS_MS.size} in ${RETRY_DELAYS_MS[attempt]} ms from ${"%.1f".format(resumeAt)} s")
+        _isLoading.value = true
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            delay(RETRY_DELAYS_MS[attempt])
+            if (current()?.videoId != item.videoId) return@launch
+            forgetStreamUrl(item.videoId)
+            playIndex(_queueIndex.value, startAtSec = resumeAt, retry = true)
+        }
+        return true
+    }
+
+    private fun isNetworkError(error: PlaybackException): Boolean = when (error.errorCode) {
+        PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        // An expired or IP-bound stream URL comes back as a 403, and a re-resolve is the cure.
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        -> true
+        else -> false
+    }
+
+    private fun playIndex(index: Int, startAtSec: Double = 0.0, retry: Boolean = false) {
         val item = _queue.value.getOrNull(index) ?: return
+        if (!retry) {
+            // A new load, by the user or the queue, starts the network budget over.
+            retryJob?.cancel()
+            sameTrackRetries = 0
+        }
         _queueIndex.value = index
         // Files the level of whatever was playing under its own id before the next track starts.
         loudnessProcessor.beginTrack(item.videoId)
@@ -509,3 +565,14 @@ class ExoPlayerEngine(private val context: Context) : PlayerEngine, PlaybackCont
         }
     }
 }
+
+/** Per-chunk retries inside the player before it reports an error. */
+private const val LOAD_RETRIES = 8
+
+/** How long to wait for the signal before each reload of the same track. */
+private val RETRY_DELAYS_MS = longArrayOf(1_000, 3_000, 8_000, 15_000)
+
+private const val MIN_BUFFER_MS = 90_000
+private const val MAX_BUFFER_MS = 300_000
+private const val PLAYBACK_BUFFER_MS = 2_500
+private const val REBUFFER_MS = 5_000
