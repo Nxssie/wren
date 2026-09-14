@@ -40,7 +40,7 @@
 
 - Search songs across YouTube Music, YouTube, and SoundCloud simultaneously, results interleaved and sortable by popularity, duration, or source
 - SoundCloud Station: start a radio of related tracks from any SoundCloud result
-- Discover per platform: SoundCloud "Made for you" mixes, curated and trending selections plus a weekly list generated from your listening history; YouTube radios seeded by your recent plays
+- Discover per platform: SoundCloud "Made for you" mixes, curated and trending selections plus a weekly list generated from your listening history; YouTube Home built from the artists you follow (new releases) and the tracks you play here (quick picks)
 - Artist pages with top songs, albums, singles, and EPs
 - Queue playback with automatic prefetching of upcoming tracks
 - Download SoundCloud tracks as local audio files (mp3/m4a) straight from the search results
