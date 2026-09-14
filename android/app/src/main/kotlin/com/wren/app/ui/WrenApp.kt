@@ -125,6 +125,8 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
                     platform = platform,
                     onPlatformChange = { platform = it; artistSearchName = null },
                     onOpenAccounts = { showAccounts = true },
+                    // The player is not a browse surface: the switcher would change nothing on it.
+                    showPlatform = !showPlayer,
                 )
             },
             bottomBar = {
@@ -213,6 +215,7 @@ private fun AppHeader(
     platform: Platform,
     onPlatformChange: (Platform) -> Unit,
     onOpenAccounts: () -> Unit,
+    showPlatform: Boolean,
 ) {
     Column(Modifier.fillMaxWidth().background(Chrome)) {
         Row(
@@ -233,14 +236,19 @@ private fun AppHeader(
                 Icon(Icons.Default.AccountCircle, contentDescription = "Accounts", tint = TextPrimary)
             }
         }
-        // Every tab browses the active platform, so the switcher is always one gesture away.
-        SectionLabel("_platform;", Modifier.padding(start = 16.dp, bottom = 6.dp))
-        PlatformSwitcher(
-            current = platform,
-            onChange = onPlatformChange,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        Spacer(Modifier.height(12.dp))
+        // Every browse tab works on the active platform, so the switcher is always one gesture
+        // away there; the player hides it, since it has no platform to switch.
+        if (showPlatform) {
+            SectionLabel("_platform;", Modifier.padding(start = 16.dp, bottom = 6.dp))
+            PlatformSwitcher(
+                current = platform,
+                onChange = onPlatformChange,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+        } else {
+            Spacer(Modifier.height(6.dp))
+        }
         Divider(color = HairlineSoft, thickness = 1.dp)
     }
 }
