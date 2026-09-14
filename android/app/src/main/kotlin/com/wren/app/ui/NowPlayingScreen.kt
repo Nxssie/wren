@@ -132,7 +132,7 @@ fun NowPlayingScreen(engine: PlayerEngine) {
     val download: (() -> Unit)? = item
         ?.takeIf { it.source == Source.SOUNDCLOUD && allowSoundCloudDownloads }
         ?.let { track -> { DownloadManager.enqueue(track, downloadsDestination(context)) } }
-    val like: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD && SoundCloudAuth.isAuthenticated }?.let { track ->
+    val like: (() -> Unit)? = item?.takeIf { it.source == Source.SOUNDCLOUD && SoundCloudLikes.CAN_TOGGLE && SoundCloudAuth.isAuthenticated }?.let { track ->
         { scope.launch { SoundCloudLikes.toggle(track.url) } }
     }
 

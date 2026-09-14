@@ -7,6 +7,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -104,5 +105,18 @@ class TtlCacheTest {
 
         assertEquals(3, afterB)
         assertEquals(4, loads.get())
+    }
+
+    @Test
+    fun `evicts by age, keeping what is younger`() = runBlocking {
+        val cache = TtlCache<String, String>(ttlMs = 60_000)
+        cache.put("old", "a")
+        Thread.sleep(30)
+        cache.put("young", "b")
+
+        cache.evictOlderThan(15)
+
+        assertNull(cache.peek("old"))
+        assertEquals("b", cache.peek("young"))
     }
 }

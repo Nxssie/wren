@@ -128,8 +128,16 @@ object YouTubeProvider : MusicProvider {
             picks.takeIf { it.isNotEmpty() }?.let {
                 Shelf(
                     title = "quick picks",
-                    caption = "radios wren built from what you play here",
-                    tracks = it,
+                    caption = "radios wren built from what you play here — ${it.size} tracks — open_the_list",
+                    cards = listOf(
+                        ShelfCard(
+                            id = "quick-picks",
+                            title = "quick picks",
+                            subtitle = "${it.size} tracks",
+                            artworkUrl = it.firstNotNullOfOrNull { t -> t.thumbnailUrl.ifBlank { null } },
+                            tracks = it
+                        )
+                    )
                 )
             },
             releases.takeIf { it.isNotEmpty() }?.let {
@@ -211,6 +219,15 @@ object YouTubeProvider : MusicProvider {
      * an empty list rather than a fetch, so a provider that does not implement them serves an
      * empty library and logs nothing while doing it.
      */
+    override suspend fun invalidateLibrary(olderThanMs: Long) {
+        songs.evictOlderThan(olderThanMs)
+        playlists.evictOlderThan(olderThanMs)
+        artists.evictOlderThan(olderThanMs)
+        playlistTracks.evictOlderThan(olderThanMs)
+        // Followed artists feed the library's artist tab, so a refresh there re-reads them too.
+        subscriptions.evictOlderThan(olderThanMs)
+    }
+
     override fun librarySongsFlow(): Flow<List<PlaylistTrack>> =
         pagedFlow(TAG, songs, account()) { cursor -> likedSongsPage(cursor) }
 

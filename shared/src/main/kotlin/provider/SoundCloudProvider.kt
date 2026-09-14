@@ -69,8 +69,22 @@ private const val TAG = "SoundCloud"
             val basis = it.basisGenres.joinToString(", ")
             Shelf(
                 title = "weekly discovery",
-                caption = buildString { append("generated $generated"); if (basis.isNotEmpty()) append(" · based_on: $basis") },
-                tracks = it.tracks
+                caption = buildString {
+                    append("generated $generated")
+                    if (basis.isNotEmpty()) append(" · based_on: $basis")
+                    append(" · "); append(it.tracks.size); append(" tracks — open_the_list")
+                },
+                cards = listOfNotNull(
+                    it.tracks.takeIf(List<SearchResult>::isNotEmpty)?.let { tracks ->
+                        ShelfCard(
+                            id = "weekly-discovery",
+                            title = "weekly discovery",
+                            subtitle = "generated $generated",
+                            artworkUrl = tracks.firstNotNullOfOrNull { t -> t.thumbnailUrl.ifBlank { null } },
+                            tracks = tracks
+                        )
+                    }
+                )
             )
         }
         return listOfNotNull(weeklySection) + selections { it.isPersonal() }
@@ -151,6 +165,12 @@ private const val TAG = "SoundCloud"
     }
 
     private fun playlistKey(playlistId: String): String = "${account()}|$playlistId"
+
+    override suspend fun invalidateLibrary(olderThanMs: Long) {
+        songs.evictOlderThan(olderThanMs)
+        playlists.evictOlderThan(olderThanMs)
+        playlistTracks.evictOlderThan(olderThanMs)
+    }
 
     override suspend fun librarySongs(): List<PlaylistTrack> =
         songs.getOrLoad(account()) { SoundCloud.userLikes(SoundCloudAuth.userId ?: return@getOrLoad emptyList()).map { it.toPlaylistTrack() } }
