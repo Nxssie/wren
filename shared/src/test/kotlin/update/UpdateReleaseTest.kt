@@ -171,6 +171,25 @@ class UpdateReleaseTest {
     }
 
     @Test
+    fun `never selects an unsigned APK regardless of the marker's capitalisation`() {
+        assertNull(parseLatestRelease(release(assets = listOf(asset("wren-0.6.0-Unsigned.apk")))))
+    }
+
+    @Test
+    fun `prefers the signed APK when the unsigned one is capitalised differently`() {
+        val release = parseLatestRelease(
+            release(
+                assets = listOf(
+                    asset("wren-0.6.0-UNSIGNED.apk"),
+                    asset("wren-0.6.0.apk"),
+                ),
+            ),
+        )!!
+
+        assertEquals("wren-0.6.0.apk", release.apkName)
+    }
+
+    @Test
     fun `matches the apk suffix case-insensitively`() {
         val release = parseLatestRelease(release(assets = listOf(asset("wren-0.6.0.APK"))))!!
 

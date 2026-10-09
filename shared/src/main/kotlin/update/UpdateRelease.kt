@@ -51,14 +51,16 @@ fun parseLatestRelease(json: String): UpdateRelease? {
  * The APK asset to install, or null when the release offers no unambiguous one.
  *
  * Only assets named `wren-*.apk` count, and a `-unsigned` build never does: an APK without the
- * release key cannot replace the installed app. A lone candidate is accepted as-is; several are
- * only accepted when one is named for the release version (`wren-<version>.apk`, exactly what
+ * release key cannot replace the installed app. Both the suffix and the unsigned marker are
+ * matched case-insensitively — the marker is what keeps an uninstallable build out, so a
+ * differently spelled one must not slip through it. A lone candidate is accepted as-is; several
+ * are only accepted when one is named for the release version (`wren-<version>.apk`, exactly what
  * `scripts/publish-android-release.sh` uploads), because guessing between them could offer the
  * wrong build.
  */
 private fun selectApk(assets: List<GitHubAsset>, tag: String): GitHubAsset? {
     val candidates = assets.filter { it.name.startsWith("wren-") && it.name.endsWith(".apk", ignoreCase = true) }
-        .filterNot { "-unsigned" in it.name }
+        .filterNot { it.name.contains("-unsigned", ignoreCase = true) }
 
     return when (candidates.size) {
         0 -> null
