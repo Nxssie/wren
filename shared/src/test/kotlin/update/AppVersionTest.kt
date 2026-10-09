@@ -61,6 +61,31 @@ class AppVersionTest {
         assertNull(AppVersion.parse(raw))
     }
 
+    // A component past Int range would overflow the parse. Returning null is the whole contract:
+    // the caller is an unattended launch check with no handler above it, so a throw here is a
+    // crash on every cold start for as long as that release is the latest one.
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "99999999999.0.0",
+            "1.99999999999.0",
+            "1.2.99999999999",
+            "2147483648.0.0",
+        ],
+    )
+    fun `returns null when a component overflows instead of throwing`(raw: String) {
+        assertNull(AppVersion.parse(raw))
+    }
+
+    @Test
+    fun `keeps a version whose describe count overflows, without a commit count`() {
+        // The triple is readable, so the version itself is usable; only the ordering hint the
+        // suffix carries is lost, and it falls back to comparing the suffix text.
+        val version = AppVersion.parse("0.6.0-99999999999-gabc1234")
+
+        assertEquals(AppVersion(0, 6, 0, "99999999999-gabc1234", null), version)
+    }
+
     @Test
     fun `returns null for a null input`() {
         assertNull(AppVersion.parse(null))

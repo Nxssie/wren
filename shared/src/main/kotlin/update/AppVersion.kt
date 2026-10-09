@@ -60,12 +60,18 @@ data class AppVersion(
         fun parse(raw: String?): AppVersion? {
             val match = raw?.let { VERSION.matchEntire(it) } ?: return null
             val suffix = match.groupValues[4].ifEmpty { null }
+            // `toIntOrNull`, never `toInt`: a component past Int range is just another shape this
+            // cannot read, and must yield null like the rest. The caller is an unattended launch
+            // check with no handler above it — a throw here escapes the coroutine and crashes the
+            // app, and because the check never gets recorded it would crash again every launch.
             return AppVersion(
-                major = match.groupValues[1].toInt(),
-                minor = match.groupValues[2].toInt(),
-                patch = match.groupValues[3].ifEmpty { "0" }.toInt(),
+                major = match.groupValues[1].toIntOrNull() ?: return null,
+                minor = match.groupValues[2].toIntOrNull() ?: return null,
+                patch = match.groupValues[3].ifEmpty { "0" }.toIntOrNull() ?: return null,
                 suffix = suffix,
-                commitsAhead = suffix?.let { DESCRIBE_SUFFIX.matchEntire(it)?.groupValues?.get(1)?.toInt() },
+                // Only the ordering hint is lost when the count overflows; the version stands and
+                // falls back to comparing suffix text.
+                commitsAhead = suffix?.let { DESCRIBE_SUFFIX.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull() },
             )
         }
     }
