@@ -1,7 +1,7 @@
 # in-app-updates — in-app auto-update for the sideloaded Android APK
 
 Branch: `feat/in-app-updates` (from `origin/dev/0.7.0`, base `697df9d`)
-Status: implementation complete — verification and review pending
+Status: complete. Native review approved and acknowledged (lineage `review-c3c33f14e1f9cff6`).
 Commits: work-unit commits authorized by the user on this branch; no push.
 
 | Task | Commit |
@@ -14,6 +14,8 @@ Commits: work-unit commits authorized by the user on this branch; no push.
 | 5 | `a4f0cf3` feat(android): download and install a release APK in place |
 | 6 | `602a8f1` feat(android): offer an available update and check on launch |
 | 6 | `73b8f0c` docs: describe how the Android app updates itself |
+| 7 | `c5ad979` fix(update): match the unsigned marker case-insensitively |
+| 7 | `617de2f` fix(update): return null instead of throwing on an overflowing version |
 
 ## Context
 
@@ -159,9 +161,83 @@ not have, and inventing one is a bigger change than this feature.
   The launch check runs on `Dispatchers.IO`, per the `util/Http` convention that its blocking
   calls are made by callers already on an IO dispatcher.
 
-- [ ] **7. Close** — full `mise run test`, `:android:app:assembleDebug`, README read-through,
+- [x] **7. Close** — full `mise run test`, `:android:app:assembleDebug`, README read-through,
   native review candidate prepared from the work-unit commits.
-  Evidence: _pending_
+  Evidence: `mise run test` green at **263 tests, 0 failures, 0 errors, 0 skipped** (shared 232 +
+  desktop 31), `:android:app:assembleDebug` green, tree clean. Independent verification pass also
+  confirmed the merged manifest resolves the provider authority to `com.wren.app.fileprovider`,
+  that `res/xml/file_paths.xml` is packaged, that the launch check runs on `Dispatchers.IO`, that a
+  cancelled download leaves no installable file, and that the feature writes only under
+  `AppDirs.config` and `cacheDir/updates`. Two defects were found and fixed here: `c5ad979`
+  (case-sensitive `-unsigned` exclusion) and `8dc8734` (overflow crash). Android `lintDebug` reports
+  45 pre-existing errors, none in any file this feature touches. Native review **approved and
+  acknowledged** after one bounded correction — see Native review outcome.
+## Native review outcome
+
+Lineage `review-c3c33f14e1f9cff6`, base-ref `697df9d`, committed-only, 17 paths, 2031 changed
+lines, tier `high` (reason `hot_path` on the update path in `ApkInstaller.kt`), correction budget
+200. All four lenses ran (`review-risk`, `review-resilience`, `review-readability`,
+`review-reliability`) and the review closed at `correction_required` with exactly one corroborated
+finding, deterministic and `introduced`:
+
+- **`R3-parse-overflow`**, severity `CRITICAL`, `shared/src/main/kotlin/update/AppVersion.kt:61-65`.
+  `parse` called `toInt()` on the regex groups, so a version component past `Int` range — or an
+  over-long describe commit count — threw `NumberFormatException` instead of returning null.
+  Nothing above it catches that: `parseLatestRelease` documents that parsing never throws,
+  `UpdateChecker.check` guards only its fetch, and the launch check runs in a coroutine. The throw
+  would escape and crash the app, and because the check is recorded only after resolution, every
+  subsequent cold start refetched, re-parsed the same tag and crashed again while that release
+  stayed latest. A crash loop, and a genuine catch — the tests covered malformed shapes but not
+  numeric overflow.
+
+Corrected in `8dc8734` (test-first: 5 failing tests first, `NumberFormatException` observed, then
+`toIntOrNull` with a null fallback and the describe-count hint dropped on overflow). 39 diff lines,
+within the 200 budget.
+
+**Ordering, and what actually blocked it.** The first submission failed for an *ordering* reason,
+not a provider defect. `gentle_review_capture` requires the binding's `--target` to equal STATUS's
+current `target_identity` (`extensions/gentle-ai.ts:7320-7358` in the gentle-pi package). The
+correction binding is issued against the **authority** target — the reviewed candidate — while any
+change to the candidate moves the current identity. So the plan can only be accepted while the
+candidate is still unmodified: `correction_lines` is a count declared **before** editing, not a
+measurement taken after. The working sequence is:
+
+1. Leave the candidate exactly as reviewed, and submit the correction plan (`correction_lines`).
+2. Commit the correction; the provider then reports `targeted_validation_required`.
+3. Submit the validation slot, whose `validationRequest.correctionTargetIdentity` binds it to the
+   corrected candidate instead of STATUS's identity.
+
+Reaching step 1 needed the candidate content restored to its reviewed state first; `git reset
+--soft c5ad979` did it without touching any file, with the commits preserved on
+`backup/post-review-fixes`. The 39-line plan then registered, the correction was committed as
+`617de2f`, and the validator ran.
+
+Correcting this same trap cost real time: three earlier submissions were rejected
+(`capture-binding-rejected`, "does not carry one non-empty matching provider lineage and target
+token") because the fix had already been committed. The lesson is recorded in Risks.
+
+**Outcome: approved.** One `review-validator` model run; the review closed at `approved` and the
+exact provider-issued acknowledgement was executed unchanged. Authority burned, evidence
+`gentle-ai.review-acknowledged/v1`, delivery left to ordinary repository policy. Nothing was
+pushed and nothing was merged.
+
+**Advisory findings — non-blocking.** The provider recorded these against the approved candidate
+and states that none opened a correction, none reopens the review, and none may be used as a
+reason to re-run review on this candidate. They are later work, not debt hidden by the approval:
+
+| id | lens | severity | location |
+| --- | --- | --- | --- |
+| `R1-signcheck-fail-open` | risk | SUGGESTION | `ApkInstaller.kt:160-180` — the deliberate signing asymmetry |
+| `R1-update-url-unpinned` | risk | SUGGESTION | `UpdateRelease.kt:22-40` |
+| `R2-1` | readability | WARNING | `UpdateBanner.kt:35-39` |
+| `R2-2` | readability | SUGGESTION | `UpdateRelease.kt:6-9` |
+| `R2-3` | readability | SUGGESTION | `odd/tasks/in-app-updates.md:120-125` |
+| `R3-android-glue-coverage` | reliability | SUGGESTION | `ApkInstaller.kt:145-160` |
+| `R3-main-thread-dismiss` | reliability | SUGGESTION | `UpdateBanner.kt:132-134` |
+| `R3-stale-apk-clear` | reliability | WARNING | `ApkInstaller.kt:134-143` |
+| `R4-001` | resilience | WARNING | `UpdateChecker.kt:104-108` |
+| `R4-002` | resilience | WARNING | `UpdateBanner.kt:78-90` |
+| `R4-003` | resilience | SUGGESTION | `ApkInstaller.kt:56-77` |
 
 ## Verification plan
 
@@ -198,6 +274,10 @@ not have, and inventing one is a bigger change than this feature.
 - **Rate limiting.** Anonymous GitHub API calls are capped per IP; the daily throttle is the
   mitigation.
 - **Scope creep into desktop.** Explicitly a non-goal.
+- **Correction ordering is a trap.** Applying and committing a correction *before* submitting the
+  correction plan makes that plan permanently unsubmittable, because the binding is bound to the
+  reviewed candidate's identity and any candidate change moves it. Plan first, then correct. See
+  Native review outcome.
 
 ## Follow-ups (not in this feature)
 
