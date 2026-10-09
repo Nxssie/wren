@@ -1,7 +1,19 @@
 # in-app-updates — in-app auto-update for the sideloaded Android APK
 
 Branch: `feat/in-app-updates` (from `origin/dev/0.7.0`, base `697df9d`)
-Status: in progress
+Status: implementation complete — verification and review pending
+Commits: work-unit commits authorized by the user on this branch; no push.
+
+| Task | Commit |
+| --- | --- |
+| plan | `58b53c0` docs(odd): plan the in-app-updates feature |
+| 1 | `3983d00` feat(update): compare installed and released app versions |
+| 2 | `864d6a9` feat(update): read the newest release and pick its APK |
+| 3 | `451f55a` feat(update): persist the last check and the dismissed version |
+| 4 | `69dee4d` feat(update): decide whether to check and what to offer |
+| 5 | `a4f0cf3` feat(android): download and install a release APK in place |
+| 6 | `602a8f1` feat(android): offer an available update and check on launch |
+| 6 | `73b8f0c` docs: describe how the Android app updates itself |
 
 ## Context
 
@@ -75,26 +87,35 @@ not have, and inventing one is a bigger change than this feature.
 
 ## Tasks
 
-- [ ] **1. Version model and comparison** — `shared/src/main/kotlin/update/AppVersion.kt`
+- [x] **1. Version model and comparison** — `shared/src/main/kotlin/update/AppVersion.kt`
   Parse `git describe`-style strings into a comparable form; strictly-newer semantics, with a
   describe suffix counting as *ahead* of its tag (see Constraints) and suffixed versions ordering
   by commit count.
   Test-first: `shared/src/test/kotlin/update/AppVersionTest.kt` over `0.6.0`, `0.6.0-12-gabc1234`,
   `0.6.0-dirty`, `v0.6.0`, equal, older, and unparseable input.
-  Evidence: _pending_
+  Evidence: commit `3983d00`. RED observed first — `:shared:compileTestKotlin` failed with
+  `Unresolved reference 'AppVersion'` and no implementation on disk; then GREEN at 22 tests,
+  0 failures. Re-verified by the parent: 22 tests / 0 failures, full `:shared:test` green.
 
-- [ ] **2. Release parsing and APK asset selection** — `shared/src/main/kotlin/update/UpdateRelease.kt`
+- [x] **2. Release parsing and APK asset selection** — `shared/src/main/kotlin/update/UpdateRelease.kt`
   Serialization models for the GitHub `releases/latest` payload; `tag_name` → version;
   select the `wren-*.apk` asset and never a `-unsigned` one.
   Test-first: fixture JSON covering extra `deb`/`msi`/`dmg` assets, an unsigned APK present,
   no APK at all, draft and prerelease.
-  Evidence: _pending_
+  Evidence: commit `864d6a9`. RED observed first — `:shared:compileTestKotlin` failed with
+  `Unresolved reference 'parseLatestRelease'` and no implementation on disk; then GREEN at 27
+  tests, 0 failures. Re-verified by the parent: full `:shared:test` green at 189 tests,
+  0 failures, 0 errors. Note both parsers return null rather than throwing, and several APK
+  candidates are resolved by the published `wren-<tag>.apk` name instead of guessing.
 
-- [ ] **3. Throttle and dismissal persistence** — `shared/src/main/kotlin/update/UpdatePreferences.kt`
+- [x] **3. Throttle and dismissal persistence** — `shared/src/main/kotlin/update/UpdatePreferences.kt`
   Follows the existing `DownloadPreference` pattern (plain scalar file under `AppDirs.config`):
   last successful check timestamp, and the version the user dismissed.
   Test-first against a temp `AppDirs.init`.
-  Evidence: _pending_
+  Evidence: commit `451f55a`. RED observed first — `:shared:compileTestKotlin` failed with
+  `Unresolved reference 'UpdatePreferences'` and no implementation on disk; then GREEN at 16
+  tests, 0 failures. Re-verified by the parent: full `:shared:test` green at 205 tests,
+  0 failures, and confirmed no throttle policy leaked into this file.
 
 - [ ] **4. Update checker state machine** — `shared/src/main/kotlin/update/UpdateChecker.kt`
   `StateFlow<UpdateState>`, injectable fetcher and clock; `check(force)` honours the daily
@@ -103,23 +124,40 @@ not have, and inventing one is a bigger change than this feature.
   not, a fetch failure becomes `Failed` without throwing and without burning the throttle.
   Evidence: _pending_
 
-- [ ] **5. Android: download, verify, install** —
+- [x] **5. Android: download, verify, install** —
   `android/app/src/main/kotlin/com/wren/app/update/ApkInstaller.kt`
-  Stream the APK into `cacheDir` via a temp file and rename on success; reject an APK whose
-  signing certificate differs from the installed app's; install through a `FileProvider`
-  content URI; detect a revoked install grant and route to the system setting. Manifest gains
-  `REQUEST_INSTALL_PACKAGES`, the provider, and `res/xml/file_paths.xml`; stale APKs are cleared.
-  Verify: `:android:app:assembleDebug` plus a manual device pass.
-  Evidence: _pending_
+  Stream the APK into `cacheDir` through a temp file renamed on success; refuse a download that is
+  not a parseable archive before opening the installer; compare the archive's signers with the
+  installed app's and refuse on a positive mismatch (`PackageManager.signingInfo` on API 28+, the
+  older `signatures` field below it), while leaving the enforcement itself to Android when the
+  signers cannot be read at all — blocking there would strand legitimate updates. Install through
+  a `FileProvider` content URI; detect a revoked install grant and route to the system setting.
+  Manifest gains `REQUEST_INSTALL_PACKAGES`, the provider, and `res/xml/file_paths.xml`; stale
+  APKs are cleared. Verify: `:android:app:assembleDebug` plus a manual device pass.
+  Evidence: commit `a4f0cf3`. `:android:app:assembleDebug` green, re-run by the parent; merged
+  manifest resolves the authority to `com.wren.app.fileprovider` and `res/xml/file_paths.xml` is
+  packaged. `FileDestination` reused for the temp/rename guarantee, not mirrored. Parent added one
+  hardening at the network boundary: the asset name is reduced to its basename before it becomes a
+  path under the cache, since `selectApk` constrains only the `wren-`/`.apk` shape. No unit test
+  exists for this file by design — see Test strategy; its behaviours remain device-unverified.
 
-- [ ] **6. Android: banner, wiring, docs** —
+- [x] **6. Android: banner, wiring, docs** —
   `android/app/src/main/kotlin/com/wren/app/ui/UpdateBanner.kt`, wired into `WrenApp.kt` above
   the tab content so it survives tab switches, built from existing theme tokens and
   `SectionLabel`. Checker constructed in `WrenApplication` with the version read from
   `PackageManager`; launch check triggered from `MainActivity`. README documents the flow, the
   one-time install grant and the same-keystore requirement.
   Verify: `:android:app:assembleDebug`, manual device pass, README review.
-  Evidence: _pending_
+  Evidence: commits `602a8f1` (wiring and banner) and `73b8f0c` (README). `:android:app:assembleDebug`
+  green, re-run by the parent; `:shared:test` green at 225 tests, 0 failures. Delivered as two
+  commits because the first single-unit delegation produced no changes at all and was split.
+  Parent correction during review: the banner was originally drawn over the tab content in the
+  scaffold's `Box`, which only avoids covering a screen if that screen happens to reserve the
+  inset. It now sits in a `Column` above the tab area so it displaces instead of covering, and
+  stays composed while the player is open, since it owns an in-flight download that leaving the
+  composition would cancel. The player overlay still paints over the whole area, banner included.
+  The launch check runs on `Dispatchers.IO`, per the `util/Http` convention that its blocking
+  calls are made by callers already on an IO dispatcher.
 
 - [ ] **7. Close** — full `mise run test`, `:android:app:assembleDebug`, README read-through,
   native review candidate prepared from the work-unit commits.
@@ -132,6 +170,22 @@ not have, and inventing one is a bigger change than this feature.
   dialog, revoked-permission path, and a same-version launch producing no banner.
 - A real end-to-end update can only be proven against a published newer release; if none exists
   at verification time, that step is reported explicitly as unverified rather than assumed.
+
+### Device pass checklist (outstanding)
+
+1. Same-version launch shows no banner (the throttle then suppresses the network call).
+2. With a newer release published, the banner appears above the tab content without covering it.
+3. Tapping Install with the grant already given downloads, then opens the system installer.
+4. Tapping Install with the grant revoked lands on the "install unknown apps" screen.
+5. Returning from that screen and tapping Install works without restarting the app.
+6. A second tap during a download does not start a second download.
+7. Opening the player mid-download keeps the banner composed and the download running.
+8. A download failure shows a retry, and the retry succeeds once the cause is gone.
+9. "Later" hides that release, and it stays hidden across a cold start.
+10. An app signed with a different key is refused with a readable message, not a raw installer
+    error.
+11. Fetched through `adb shell` after a cold start: exactly one request to `api.github.com`,
+    none on the second launch that day.
 
 ## Risks
 
