@@ -119,12 +119,15 @@ not have, and inventing one is a bigger change than this feature.
   tests, 0 failures. Re-verified by the parent: full `:shared:test` green at 205 tests,
   0 failures, and confirmed no throttle policy leaked into this file.
 
-- [ ] **4. Update checker state machine** — `shared/src/main/kotlin/update/UpdateChecker.kt`
+- [x] **4. Update checker state machine** — `shared/src/main/kotlin/update/UpdateChecker.kt`
   `StateFlow<UpdateState>`, injectable fetcher and clock; `check(force)` honours the daily
   throttle; states idle / checking / available(version, url, size) / failed.
   Test-first: throttle suppresses, `force` bypasses, newer releases surface, equal or older do
   not, a fetch failure becomes `Failed` without throwing and without burning the throttle.
-  Evidence: _pending_
+  Evidence: commit `69dee4d`; the checkbox above was left unticked by mistake until 2026-10-15.
+  Re-run for this record: `update.*` green at 92 tests / 0 failures (UpdateChecker 20,
+  AppVersion 27, UpdateRelease 29, UpdatePreferences 16). The throttle half is also confirmed
+  end to end by the device pass below.
 
 - [x] **5. Android: download, verify, install** —
   `android/app/src/main/kotlin/com/wren/app/update/ApkInstaller.kt`
@@ -247,21 +250,57 @@ reason to re-run review on this candidate. They are later work, not debt hidden 
 - A real end-to-end update can only be proven against a published newer release; if none exists
   at verification time, that step is reported explicitly as unverified rather than assumed.
 
-### Device pass checklist (outstanding)
+### Device pass (executed 2026-10-15)
 
-1. Same-version launch shows no banner (the throttle then suppresses the network call).
-2. With a newer release published, the banner appears above the tab content without covering it.
-3. Tapping Install with the grant already given downloads, then opens the system installer.
-4. Tapping Install with the grant revoked lands on the "install unknown apps" screen.
-5. Returning from that screen and tapping Install works without restarting the app.
-6. A second tap during a download does not start a second download.
-7. Opening the player mid-download keeps the banner composed and the download running.
-8. A download failure shows a retry, and the retry succeeds once the cause is gone.
-9. "Later" hides that release, and it stays hidden across a cold start.
-10. An app signed with a different key is refused with a readable message, not a raw installer
-    error.
-11. Fetched through `adb shell` after a cold start: exactly one request to `api.github.com`,
-    none on the second launch that day.
+Method: a debug APK labelled `0.5.0` (`WREN_VERSION_NAME=0.5.0`, `versionCode` deliberately left
+at the commit count so it replaced the installed build instead of being refused as a downgrade),
+installed over the existing debug build; `files/config/update-last-check` removed to lift the
+daily throttle; then a cold start read through `uiautomator dump` plus `adb exec-out screencap`.
+The published `v0.6.0` was the newer release under test.
+
+What it proved, from checks that agree with each other:
+
+- The banner rendered `wren v0.6.0 is available` above the tab content (screenshot kept as
+  `dist-artifacts/screen3.png`), so the fetch, the payload parse, the version comparison and the
+  banner all work against the live GitHub API.
+- The download ran to completion and `ApkInstaller.verifyArchive` refused it:
+  `downloaded APK is signed with a different key than the installed app; it cannot replace it`.
+  The release asset is `CN=wren`, the installed build was debug-signed.
+- `cache/updates` was empty afterwards (the guard deletes the APK), logcat carried no
+  `ApkInstaller: downloaded …` line, which sits *after* the guard, and
+  `files/config/update-last-check` held the check's timestamp.
+
+Checklist status against that pass:
+
+1. Same-version launch shows no banner — **verified** separately the same day: with the throttle
+   holding the day's check, the Wren UI was on screen (`mCurrentFocus` was `MainActivity`) and
+   `_update;` was absent from the accessibility tree.
+2. Banner appears above the tab content without covering it — **verified**.
+3. Install with the grant already given downloads, then opens the system installer — **partly**:
+   the download completed, but the installer was never reached because the guard refused the
+   asset first. The same-key path remains unverified.
+4. Install with the grant revoked lands on "install unknown apps" — **not exercised**. The
+   uninstall had reset the grant, so it was re-granted over adb
+   (`appops set com.wren.app REQUEST_INSTALL_PACKAGES allow`) instead of being tested.
+5. Returning from that screen and tapping Install works without a restart — **not exercised**.
+6. A second tap during a download does not start a second one — **not exercised**.
+7. Opening the player mid-download keeps the banner composed and the download running —
+   **not exercised**.
+8. A download failure shows a retry that succeeds once the cause is gone — **partly**: the guard's
+   refusal rendered with a `Retry` action; a network-failure retry is untested.
+9. "Later" hides that release, and it stays hidden across a cold start — **not exercised**.
+10. An app signed with a different key is refused with a readable message — **verified**; that is
+    the message quoted above.
+11. One request to `api.github.com` per cold start, none on the second launch that day —
+    **partly**: the throttle recorded the successful check and the same-day relaunch made no call,
+    but the request count itself was not measured.
+
+Environment note for anyone repeating this: **the phone has to be unlocked and awake.** With the
+keyguard up the activity never resumes, the process is frozen seconds later, and the check's
+network calls fail while the device resolves the same hosts fine from a shell — two attempts were
+lost that way. A successful check always writes `files/config/update-last-check`; a non-2xx
+response and a throwing fetch deliberately do not, so that file's absence is the cheapest signal
+that nothing ran.
 
 ## Risks
 
