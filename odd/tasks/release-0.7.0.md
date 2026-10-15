@@ -1,22 +1,22 @@
 # release-0.7.0 — cut, sign and publish 0.7.0
 
 Branch: `feat/in-app-updates` → `dev/0.7.0` → `main` (tag `v0.7.0` on the main merge)
-Status: in progress.
+Status: complete. Published 2026-10-15 as https://github.com/Nxssie/wren/releases/tag/v0.7.0
 Commits: release commits authorized by the user; the tag and the GitHub release are the goal.
 
 | Task | Route | Commit |
 | --- | --- | --- |
 | 1 | Release ground truth: topology, CI, gh, apksigner | n/a |
-| 2 | Docs: device pass recorded, stale task-4 checkbox fixed | pending |
-| 3 | This document committed with the two doc updates | pending |
-| 4 | `feat/in-app-updates` → `dev/0.7.0` | pending |
-| 5 | `fix/oauth-loopback-bind` (PR #13) → `dev/0.7.0` | pending |
-| 6 | `dev/0.7.0` → `main` (PR, merge commit) | pending |
-| 7 | Tag `v0.7.0`, push | pending |
-| 8 | Wait for gradle-ci on main for the tagged commit | pending |
-| 9 | `mise run android:release` (signs, verifies, creates the release) | pending |
-| 10 | `mise run desktop:release` (attaches deb/msi/dmg) | pending |
-| 11 | Close PR #14 as superseded | pending |
+| 2 | Docs: device pass recorded, stale task-4 checkbox fixed | `eff6d00` |
+| 3 | `odd/tasks/release-0.7.0.md` committed with the two doc updates | `c2c9c8d` |
+| 4 | `feat/in-app-updates` → `dev/0.7.0` | `918fbab` |
+| 5 | `fix/oauth-loopback-bind` (PR #13) → `dev/0.7.0`, desktop `appVersion` re-bumped 0.6.1 → 0.7.0 | `e7c2c18`, `98c74c6` |
+| 6 | `dev/0.7.0` → `main` (PR #15, merge commit) | `837124fa` |
+| 7 | Tag `v0.7.0` on `837124fa`, pushed | — |
+| 8 | gradle-ci run 38712137421 on main: completed success | — |
+| 9 | `mise run android:release` created the release with `wren-0.7.0.apk`, `CN=wren` verified | — |
+| 10 | `mise run desktop:release` attached deb/msi/dmg from that same CI run | — |
+| 11 | PR #14 closed as superseded (its fix shipped as `a968c44`) | — |
 
 ## Specs
 
@@ -53,3 +53,9 @@ Commits: release commits authorized by the user; the tag and the GitHub release 
   the canonical names to its children.
 - **L3.** Decisions relayed through the question prompt: content = this branch + PR #13, tag on
   the main merge, PR #14 closed as superseded.
+- **L4.** Outcome: everything above published and verified. The desktop `appVersion` had come
+  into `dev/0.7.0` as 0.6.1 through the PR #13 merge and was re-bumped to 0.7.0 before the tag —
+  the published deb/msi/dmg names all carry 0.7.0, which is the check that caught it. Suite
+  green at 267 tests / 0 failures before the merge; CI run 38712137421 success; APK signature
+  `dffda062…` (`CN=wren`). PR #14 closed by hand: the cherry-pick is a different SHA, so GitHub
+  would never have closed it.

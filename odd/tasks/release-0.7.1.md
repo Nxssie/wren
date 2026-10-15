@@ -5,9 +5,9 @@ Status: in progress.
 
 | Task | Route | Commit |
 | --- | --- | --- |
-| 1 | Merge `feat/soundcloud-like-writes` into `dev/0.7.0`, resolve the 3 conflicts | pending |
-| 2 | About row in `AccountsDialog` showing the installed version | pending |
-| 3 | Record the 0.7.0 outcome in `odd/tasks/release-0.7.0.md`; bump `appVersion` to 0.7.1 | pending |
+| 1 | Merge `feat/soundcloud-like-writes` into `dev/0.7.0`, resolve the 3 conflicts | `fb7fb3e` |
+| 2 | About row in `AccountsDialog` showing the installed version | `5290680` |
+| 3 | Record the 0.7.0 outcome in `odd/tasks/release-0.7.0.md`; bump `appVersion` to 0.7.1 | this commit |
 | 4 | Suite + `:android:app:assembleDebug` + `assembleRelease` green | pending |
 | 5 | PR `dev/0.7.0` → `main`, tag `v0.7.1`, publish APK + desktop | pending |
 | 6 | The phone updates itself: the first real end-to-end updater pass | pending |
