@@ -9,6 +9,7 @@ import kotlinx.serialization.json.*
 import util.AppDirs
 import util.Http
 import util.Log
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.security.MessageDigest
@@ -111,7 +112,10 @@ suspend fun runGoogleLogin(creds: OAuthCredentials, openBrowser: (String) -> Uni
         ServerSocket().apply {
             reuseAddress = true
             soTimeout = CALLBACK_TIMEOUT_MS
-            bind(InetSocketAddress("localhost", 0))
+            // The loopback address itself, not the name: resolving "localhost" goes through the
+            // system resolver, which is the one thing a sign-in should not depend on. The redirect
+            // URI keeps the name because the browser resolves it on its own.
+            bind(InetSocketAddress(InetAddress.getLoopbackAddress(), 0))
         }
     }
     synchronized(pendingLock) {

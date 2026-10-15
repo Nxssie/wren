@@ -53,4 +53,16 @@ class TtlCache<K : Any, V : Any>(private val ttlMs: Long, private val maxEntries
     suspend fun clear() {
         lock.withLock { entries.clear() }
     }
+
+    /**
+     * Drops what was loaded more than [ageMs] ago, still-fresh or not. For a screen that wants a
+     * list re-read on entry once it is a minute old, without giving up the cache for the tab
+     * hopping in between.
+     */
+    suspend fun evictOlderThan(ageMs: Long) {
+        lock.withLock {
+            val cutoff = System.currentTimeMillis() - ageMs
+            entries.entries.removeAll { it.value.loadedAt < cutoff }
+        }
+    }
 }

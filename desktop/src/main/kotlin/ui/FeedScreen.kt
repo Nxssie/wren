@@ -76,9 +76,13 @@ private fun FeedScreen(
             when (card.kind) {
                 ShelfCardKind.TRACKS -> {
                     opened.add(Open.Tracks(card, null))
-                    val tracks = runCatching { provider.collectionTracks(card.id) }.getOrDefault(emptyList())
-                    opened[index] = Open.Tracks(card, tracks)
-                    tracks.take(6).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    if (card.tracks != null) {
+                        opened[index] = Open.Tracks(card, card.tracks)
+                    } else {
+                        val tracks = runCatching { provider.collectionTracks(card.id) }.getOrDefault(emptyList())
+                        opened[index] = Open.Tracks(card, tracks)
+                        tracks.take(6).forEach { launch { resolveStreamUrl(it.videoId) } }
+                    }
                 }
                 ShelfCardKind.SHELVES -> {
                     opened.add(Open.Shelves(card, null))
@@ -186,8 +190,26 @@ private fun ShelfList(shelves: List<Shelf>, player: FFmpegPlayer, onOpen: (Shelf
                 }
             }
             if (shelf.tracks.isNotEmpty()) {
-                items(shelf.tracks.size, key = { "track:$sIdx:$it:${shelf.tracks[it].videoId}" }) { index ->
-                    TrackRow(shelf.tracks[index], index, shelf.tracks, player, onArtistClick = null)
+                // A shelf that carries a track list opens as a navigable list — never a row of
+                // instant-play rows. Playing starts only from an explicit action inside the list.
+                item(key = "list-$sIdx") {
+                    val tracks = shelf.tracks
+                    ListCard(
+                        title = shelf.title,
+                        subtitle = shelf.caption ?: "${tracks.size} tracks",
+                        count = tracks.size,
+                        artworkUrl = tracks.firstNotNullOfOrNull { it.thumbnailUrl.ifBlank { null } },
+                        onClick = {
+                            onOpen(
+                                ShelfCard(
+                                    id = "shelf-$sIdx",
+                                    title = shelf.title,
+                                    subtitle = shelf.caption,
+                                    tracks = tracks
+                                )
+                            )
+                        }
+                    )
                 }
             }
         }
@@ -201,6 +223,28 @@ fun HomeScreen(provider: MusicProvider, player: FFmpegPlayer) =
 @Composable
 fun ExploreScreen(provider: MusicProvider, player: FFmpegPlayer) =
     FeedScreen(provider, player, "explore", provider.exploreEmptyHint) { provider.explore() }
+
+@Composable
+private fun ListCard(
+    title: String,
+    subtitle: String,
+    count: Int,
+    artworkUrl: String?,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Thumbnail(artworkUrl ?: "", Modifier.size(64.dp))
+        Column {
+            Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$count tracks — open_the_list", color = PsSteel400, fontFamily = FontMono, fontSize = 10.sp)
+        }
+    }
+}
 
 @Composable
 private fun CollectionCard(card: ShelfCard, onClick: () -> Unit) {

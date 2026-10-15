@@ -44,7 +44,7 @@ fun SearchScreen(
     val context = LocalContext.current
     val downloads by DownloadManager.states.collectAsState()
     val liked by SoundCloudLikes.liked.collectAsState()
-    val canLike = provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
+    val canLike = SoundCloudLikes.CAN_TOGGLE && provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
 
     fun doSearch() {
         if (query.isBlank()) return
