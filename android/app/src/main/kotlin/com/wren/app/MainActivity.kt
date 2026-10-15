@@ -14,7 +14,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.wren.app.ui.WrenApp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Deliberately owns no teardown: the engine lives in [WrenApplication] and the playback
@@ -32,7 +35,15 @@ class MainActivity : ComponentActivity() {
         val engine = (application as WrenApplication).engine
         // A relaunch replays the launch intent; only a real launch moves the tab, so the
         // screen the user was on is not yanked away from under them.
-        if (savedInstanceState == null) openNowPlaying.value = intent.opensNowPlaying()
+        if (savedInstanceState == null) {
+            openNowPlaying.value = intent.opensNowPlaying()
+            // One throttled check per cold start. The checker blocks on the network by design
+            // (see util.Http: "every caller already runs on an IO dispatcher"), so it is launched
+            // off the main dispatcher a Compose LaunchedEffect would otherwise have given it.
+            lifecycleScope.launch(Dispatchers.IO) {
+                (application as WrenApplication).updateChecker.check()
+            }
+        }
         setContent {
             RequestNotificationPermission()
             WrenApp(engine, openNowPlaying)

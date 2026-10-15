@@ -8,8 +8,10 @@ import auth.OAuthConfig
 import com.wren.app.player.ExoPlayerEngine
 import com.wren.app.ui.globalDark
 import com.wren.app.ui.allowSoundCloudDownloads
+import com.wren.app.update.ApkInstaller
 import com.wren.app.widget.WrenWidgetUpdater
 import provider.LibraryWarmup
+import update.UpdateChecker
 import util.AppDirs
 import util.DownloadPreference
 import util.ThemePreference
@@ -22,6 +24,12 @@ import java.io.File
 class WrenApplication : Application() {
 
     lateinit var engine: ExoPlayerEngine
+        private set
+
+    lateinit var apkInstaller: ApkInstaller
+        private set
+
+    lateinit var updateChecker: UpdateChecker
         private set
 
     override fun onCreate() {
@@ -44,10 +52,27 @@ class WrenApplication : Application() {
         Streams.resolver = HttpStreamResolver()
         engine = ExoPlayerEngine(this)
         engine.start()
+        // The updater is glue the shared code cannot build for itself: it needs the installed
+        // version, which only the platform knows. An unreadable version becomes null, which the
+        // checker treats as "offer nothing" (covered by its own tests). The real clock and the
+        // default fetch are injected here precisely so no HTTP call is reimplemented on Android.
+        apkInstaller = ApkInstaller(this)
+        updateChecker = UpdateChecker(
+            currentVersion = installedVersionName(),
+            now = System::currentTimeMillis,
+        )
+        // A leftover APK from a previous run is dead weight; clearing it at startup keeps the
+        // cache from accumulating a sibling per launch.
+        apkInstaller.clearStale()
         // Repaints the home-screen widget from the engine's state; starts with no widget placed too,
         // because the collector only reacts to track/transport changes, not to the clock.
         WrenWidgetUpdater.start(this)
         // The library costs a walk over every page of it; build it while the user is elsewhere.
         LibraryWarmup.start()
     }
+
+    /** The installed `versionName`; null when it cannot be read, which offers no update. */
+    private fun installedVersionName(): String? = runCatching {
+        packageManager.getPackageInfo(packageName, 0).versionName
+    }.getOrNull()
 }

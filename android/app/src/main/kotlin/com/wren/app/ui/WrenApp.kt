@@ -36,6 +36,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import api.SoundCloudLikes
 import api.YouTubeLikes
 import auth.AuthEvents
+import com.wren.app.WrenApplication
 import util.ThemePreference
 import player.PlayerEngine
 import provider.Platform
@@ -93,6 +95,9 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
     var artistSearchName by remember { mutableStateOf<String?>(null) }
     val authVersion by AuthEvents.version.collectAsState()
     val provider = remember(platform) { Providers.of(platform) }
+    // The updater lives on the Application, like the engine; the banner reads its StateFlow.
+    val app = LocalContext.current.applicationContext as WrenApplication
+    val updateState by app.updateChecker.state.collectAsState()
 
     // Likes follow the SoundCloud session: load on start, reload/clear on sign in/out.
     LaunchedEffect(authVersion) {
@@ -142,24 +147,35 @@ fun WrenApp(engine: PlayerEngine, openNowPlaying: MutableState<Boolean>) {
             },
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                // Re-key on auth changes so screens re-run with the new session.
-                when (tab) {
-                    WrenTab.HOME -> key(platform, authVersion) { HomeScreen(provider, engine) }
-                    WrenTab.SEARCH -> key(platform, authVersion) {
-                        SearchScreen(
-                            provider = provider,
-                            engine = engine,
-                            seedQuery = artistSearchName,
-                            onSeedConsumed = { artistSearchName = null },
-                        )
-                    }
-                    WrenTab.EXPLORE -> key(platform, authVersion) { ExploreScreen(provider, engine) }
-                    WrenTab.LIBRARY -> key(platform, authVersion) {
-                        LibraryScreen(
-                            provider = provider,
-                            engine = engine,
-                            onArtistSearch = { artistSearchName = it; navigate(WrenTab.SEARCH) },
-                        )
+                Column(Modifier.fillMaxSize()) {
+                    // The banner displaces the tab content instead of covering it, so no screen has
+                    // to reserve an inset for a strip that is absent most of the time. It renders
+                    // zero height unless there is an update to offer, and it stays composed while
+                    // the player is open: the banner owns an in-flight download, and leaving the
+                    // composition would cancel it.
+                    UpdateBanner(state = updateState, installer = app.apkInstaller)
+
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        // Re-key on auth changes so screens re-run with the new session.
+                        when (tab) {
+                            WrenTab.HOME -> key(platform, authVersion) { HomeScreen(provider, engine) }
+                            WrenTab.SEARCH -> key(platform, authVersion) {
+                                SearchScreen(
+                                    provider = provider,
+                                    engine = engine,
+                                    seedQuery = artistSearchName,
+                                    onSeedConsumed = { artistSearchName = null },
+                                )
+                            }
+                            WrenTab.EXPLORE -> key(platform, authVersion) { ExploreScreen(provider, engine) }
+                            WrenTab.LIBRARY -> key(platform, authVersion) {
+                                LibraryScreen(
+                                    provider = provider,
+                                    engine = engine,
+                                    onArtistSearch = { artistSearchName = it; navigate(WrenTab.SEARCH) },
+                                )
+                            }
+                        }
                     }
                 }
 
