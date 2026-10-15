@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The only thing Wren ever shares is a downloaded APK, so the FileProvider exposes the
+     `updates` cache directory alone — never the whole cache dir, and no external path. -->
+<paths>
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

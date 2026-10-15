@@ -122,7 +122,9 @@ data class ShelfCard(
     val title: String,
     val subtitle: String? = null,
     val artworkUrl: String? = null,
-    val kind: ShelfCardKind = ShelfCardKind.TRACKS
+    val kind: ShelfCardKind = ShelfCardKind.TRACKS,
+    /** Set when the list travels with the shelf and no `collectionTracks` roundtrip is needed. */
+    val tracks: List<SearchResult>? = null
 )
 
 /** One feed shelf. A flat track list, a row of cards, or both — a screen renders what is non-empty. */

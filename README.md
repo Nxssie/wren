@@ -204,6 +204,26 @@ there would be nothing to trace it to), verifies the APK is signed by `CN=wren` 
 uploading, and adds the asset to the release the tag already has — the desktop artifacts and
 the APK end up on the same page.
 
+### Updates
+
+The app keeps itself up to date: once a day it asks the GitHub release for a newer APK,
+downloads it in the background, and installs it after one confirming tap on Android's own
+installer dialog. Nobody has to find the release page again.
+
+Two things it needs, and both follow from the section above:
+
+- The **first** install still has to allow "install unknown apps" for Wren, because no app may
+  install a package without it. When that grant is missing the banner routes to the setting
+  instead of failing at the last step.
+- Every update has to be signed with the **same key** as the app already installed, which is why
+  releases are published by hand with the release keystore and never from CI. An APK signed with
+  anything else is refused before the installer is even opened.
+
+The check is one anonymous GitHub API call, and that endpoint is rate-limited per IP — hence the
+daily throttle rather than a check per launch. A version the user dismissed stays hidden, while a
+newer one still shows. This covers the APK only: `wren_*_amd64.deb`, `Wren-*.msi` and `Wren-*.dmg`
+still come from the release page.
+
 Requirements: JDK 21, an Android SDK (`ANDROID_HOME`, or `sdk.dir` in `local.properties`),
 and `android.useAndroidX=true` in `gradle.properties` (see `gradle.properties.example`).
 

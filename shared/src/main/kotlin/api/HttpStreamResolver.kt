@@ -151,10 +151,27 @@ class HttpStreamResolver : StreamResolver {
     private fun JsonObject.mimeType(): String =
         this["format"]?.jsonObject?.get("mime_type")?.jsonPrimitive?.contentOrNull.orEmpty()
 
-    /** The transcoding URL for [protocol], MP3 renditions ahead of Opus: every decoder plays MP3. */
-    private fun List<JsonObject>.pick(protocol: String): String? =
+    /**
+     * The MIME type without its parameters, lowercased so it can be compared exactly. A prefix test
+     * is what went wrong here: `audio/mpegurl` — the HLS playlist type — starts with "audio/mpeg",
+     * so it was taken for MP3 and outranked the aac rendition that actually plays.
+     */
+    private fun JsonObject.baseMimeType(): String =
+        mimeType().substringBefore(';').trim().lowercase()
+
+    /**
+     * The transcoding URL for [protocol], best candidate first: MP3 ahead of Opus (every decoder
+     * plays MP3), and fMP4/aac ahead of the HLS playlist type, which is a manifest and not audio.
+     */
+    internal fun List<JsonObject>.pick(protocol: String): String? =
         filter { it.protocol() == protocol }
-            .sortedBy { if (it.mimeType().startsWith("audio/mpeg")) 0 else 1 }
+            .sortedBy {
+                when (it.baseMimeType()) {
+                    "audio/mpeg" -> 0
+                    "audio/mp4" -> 1
+                    else -> 2
+                }
+            }
             .firstNotNullOfOrNull { it["url"]?.jsonPrimitive?.contentOrNull }
 
     /**

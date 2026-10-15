@@ -65,6 +65,13 @@ interface MusicProvider {
 
     /** The user's liked tracks. Empty when unsupported or unauthenticated. */
     suspend fun librarySongs(): List<PlaylistTrack> = emptyList()
+
+    /**
+     * Forgets the cached library lists — all of them, or only those loaded more than
+     * [olderThanMs] ago — so the next read walks the platform again. The Library calls it on
+     * entry with a short age and on pull-to-refresh with none.
+     */
+    suspend fun invalidateLibrary(olderThanMs: Long = 0) {}
     /** Artists behind the user's library (follows/subscriptions). Empty when unsupported. */
     suspend fun libraryArtists(): List<ArtistResult> = emptyList()
 

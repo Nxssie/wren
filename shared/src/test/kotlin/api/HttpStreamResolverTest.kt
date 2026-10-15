@@ -1,5 +1,6 @@
 package api
 
+import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -49,4 +50,55 @@ class HttpStreamResolverTest {
         assertNull(parsePlayerResponse("not json"))
         assertNull(parsePlayerResponse("""{"streamingData":{"adaptiveFormats":[]}}"""))
     }
+
+    /**
+     * The real shape of a monetized SoundCloud track: no progressive rendition at all, and two
+     * `hls` entries whose mime types both start with "audio/mpeg" — only the second is the MP3
+     * prefix that `audio/mpegurl` (the HLS playlist type) must not be mistaken for.
+     */
+    private val monetizedHlsTranscodings = transcodings(
+        """
+        [
+          {"url":"https://api-v2.soundcloud.com/media/aac/stream/hls",
+           "format":{"protocol":"hls","mime_type":"audio/mp4; codecs=\"mp4a.40.2\""}},
+          {"url":"https://api-v2.soundcloud.com/media/playlist/stream/hls",
+           "format":{"protocol":"hls","mime_type":"audio/mpegurl"}}
+        ]
+        """.trimIndent()
+    )
+
+    @Test
+    fun `picks the fMP4 hls rendition over the playlist mime type`() {
+        val picked = with(HttpStreamResolver()) { monetizedHlsTranscodings.pick("hls") }
+
+        assertEquals("https://api-v2.soundcloud.com/media/aac/stream/hls", picked)
+    }
+
+    @Test
+    fun `keeps mp3 ahead of opus for progressive renditions`() {
+        val offered = transcodings(
+            """
+            [
+              {"url":"https://api-v2.soundcloud.com/media/opus/stream/progressive",
+               "format":{"protocol":"progressive","mime_type":"audio/ogg; codecs=\"opus\""}},
+              {"url":"https://api-v2.soundcloud.com/media/mp3/stream/progressive",
+               "format":{"protocol":"progressive","mime_type":"audio/mpeg"}}
+            ]
+            """.trimIndent()
+        )
+
+        val picked = with(HttpStreamResolver()) { offered.pick("progressive") }
+
+        assertEquals("https://api-v2.soundcloud.com/media/mp3/stream/progressive", picked)
+    }
+
+    @Test
+    fun `returns null when no rendition offers the requested protocol`() {
+        val picked = with(HttpStreamResolver()) { monetizedHlsTranscodings.pick("progressive") }
+
+        assertNull(picked)
+    }
 }
+
+private fun transcodings(json: String): List<JsonObject> =
+    Json.parseToJsonElement(json).jsonArray.map { it.jsonObject }
