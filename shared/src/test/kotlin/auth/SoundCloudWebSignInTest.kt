@@ -73,4 +73,14 @@ class SoundCloudWebSignInTest {
     fun `the script reads the key the web player stores`() {
         assertTrue(SoundCloudWebSignIn.TOKEN_SCRIPT.contains(SoundCloudWebSignIn.TOKEN_KEY))
     }
+
+    @Test
+    fun `the bot-protection cookie is read from whichever jar holds it`() {
+        val jars = listOf(null, "oauth_token=access; _ga=1", "datadome=verdict~123; _gid=2")
+
+        assertEquals("verdict~123", SoundCloudWebSignIn.cookieFromJars(jars, SoundCloudWebSignIn.DATA_DOME_KEY))
+        assertEquals("access", SoundCloudWebSignIn.cookieFromJars(jars, SoundCloudWebSignIn.TOKEN_KEY))
+        assertNull(SoundCloudWebSignIn.cookieFromJars(jars, SoundCloudWebSignIn.REFRESH_TOKEN_KEY))
+        assertNull(SoundCloudWebSignIn.cookieFromJars(emptyList(), SoundCloudWebSignIn.DATA_DOME_KEY))
+    }
 }

@@ -91,7 +91,7 @@ fun LibraryScreen(
     val queue by engine.queue.collectAsState()
     val queueIndex by engine.queueIndex.collectAsState()
     val liked by SoundCloudLikes.liked.collectAsState()
-    val canLike = SoundCloudLikes.CAN_TOGGLE && provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
+    val canLike = provider.platform == Platform.SOUNDCLOUD && provider.isAuthenticated
     val onLike: ((PlaylistTrack) -> Unit)? = if (canLike) {
         { track -> scope.launch { SoundCloudLikes.toggle(track.url) } }
     } else null

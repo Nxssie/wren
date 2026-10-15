@@ -37,8 +37,17 @@ object SoundCloudWebSignIn {
     /** Reads the token out of the page's own storage; evaluated in the WebView. */
     val TOKEN_SCRIPT: String = "window.localStorage.getItem('$TOKEN_KEY')"
 
-    /** What the page left behind: the session, the key that renews it, and who issued it. */
-    data class Session(val accessToken: String, val refreshToken: String?, val clientId: String?)
+    fun cookieFromJars(jars: List<String?>, name: String): String? =
+        jars.firstNotNullOfOrNull { tokenFromCookies(it, name) }
+
+    /** What the page leaves behind: the session, the key that renews it, and who issued it. */
+    data class Session(
+        val accessToken: String,
+        val refreshToken: String?,
+        val clientId: String?,
+        /** The bot-protection verdict cookie captured straight from the sign-in page's jar. */
+        val dataDomeCookie: String? = null
+    )
 
     /**
      * The client id that issued the session, read off the authorize URL the page navigates to.
@@ -50,6 +59,9 @@ object SoundCloudWebSignIn {
         ?.substringBefore('&')
         ?.substringBefore('#')
         ?.takeIf { it.length == 32 && it.all(Char::isLetterOrDigit) }
+
+    /** Bot-protection cookie SoundCloud's own client sends along on authenticated writes. */
+    const val DATA_DOME_KEY = "datadome"
 
     private val json = Json { ignoreUnknownKeys = true }
 

@@ -42,6 +42,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- The captcha SoundCloud's bot protection puts in front of a like; see DataDomeChallenge. -->
+        <activity
+            android:name=".util.DataDomeChallengeActivity"
+            android:exported="false"
+            android:label="SoundCloud check" />
+
         <service
             android:name=".playback.WrenPlaybackService"
             android:exported="false"

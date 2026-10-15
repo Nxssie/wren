@@ -3,6 +3,7 @@ package provider
 import api.Page
 import api.SoundCloud
 import api.SoundCloudDiscovery
+import api.SoundCloudLikes
 import api.pagedFlow
 import auth.SoundCloudAuth
 import kotlinx.coroutines.async
@@ -39,6 +40,18 @@ private const val TAG = "SoundCloud"
     override val exploreEmptyHint = "sign_in_or_play_something_to_seed_explore"
 
     private const val LIKES_ID = "likes"
+
+    init {
+        // A like changes the list the Library shows, and these caches are measured in minutes.
+        SoundCloudLikes.onChanged = { invalidateLibrary() }
+    }
+
+    /** Drops everything the Library reads, so the next visit sees the like that was just made. */
+    private suspend fun invalidateLibrary() {
+        songs.clear()
+        playlists.clear()
+        playlistTracks.clear()
+    }
 
     // Same reasoning as the YouTube provider: these walk every page of a cursor and the screens
     // are rebuilt on every tab change.

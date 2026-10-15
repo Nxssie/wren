@@ -206,6 +206,25 @@ fun AccountsDialog(
                 }
 
                 Spacer(Modifier.height(16.dp))
+                // The one place the installed version is visible. The updater compares it against
+                // the release page silently; a user reporting a problem needs the same string.
+                val versionName = remember {
+                    runCatching {
+                        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                    }.getOrNull()
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("_about;", color = PsSteel400, fontFamily = FontMono, fontSize = 10.sp)
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        versionName ?: "unknown",
+                        color = TextPrimary,
+                        fontFamily = FontMono,
+                        fontSize = 11.sp,
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                     Text("close;", color = PsSteel400, fontFamily = FontMono, fontSize = 12.sp)
                 }
