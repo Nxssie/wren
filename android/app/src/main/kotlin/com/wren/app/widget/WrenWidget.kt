@@ -119,8 +119,7 @@ private data class WrenWidgetState(
 
         /** The platform's own "kept" state: a SoundCloud like, or a YouTube like (the collection). */
         private fun likedOf(item: QueueItem): Boolean? = when (item.source) {
-            // On the widget the heart is a button, so it is not shown while likes cannot be written.
-            Source.SOUNDCLOUD -> if (SoundCloudLikes.CAN_TOGGLE && SoundCloudAuth.isAuthenticated) SoundCloudLikes.isLiked(item.url) else null
+            Source.SOUNDCLOUD -> if (SoundCloudAuth.isAuthenticated) SoundCloudLikes.isLiked(item.url) else null
             else -> if (GoogleAuth.isAuthenticated) YouTubeLikes.isLiked(item.videoId) else null
         }
 
