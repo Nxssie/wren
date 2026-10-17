@@ -17,6 +17,10 @@
   <img src="https://img.shields.io/badge/UI-Compose%20Multiplatform-4285F4.svg" alt="Compose Multiplatform">
 </p>
 
+<p align="center">
+  <a href="https://nan.builders/?ref=built-with-nan"><img src="https://nan.builders/badge/built-with-nan-compact.svg" alt="Built with NaN"></a>
+</p>
+
 > ## Read this first
 >
 > **Wren is for private, personal use, and it is not affiliated with, endorsed by, or permitted by
