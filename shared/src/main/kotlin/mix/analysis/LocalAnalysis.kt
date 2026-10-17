@@ -2,6 +2,7 @@ package mix.analysis
 
 import mix.BpmKey
 import mix.CamelotKey
+import mix.HarmonicRelation
 import org.jtransforms.fft.DoubleFFT_1D
 import kotlin.math.abs
 import kotlin.math.ln
@@ -223,12 +224,21 @@ object LocalAnalysis {
         // A flat chroma matches every rotation about equally; that is not a key, it is noise.
         if (!secondScore.isFinite() || bestScore - secondScore >= MIN_KEY_CONFIDENCE) return best
 
-        // Half the material that straddles a relative pair scores the two sides almost identically:
-        // A minor and C major share every note. That is not noise, and the two slots mix with the
-        // same neighbours, so the better half is reported. Two distant slots tied are still unknown.
+        // Ties are common on real material: a remix that straddles A minor and D minor scores them
+        // within a fraction of a percent, and the chroma has no leading tone to settle the mode.
+        // When the runner-up is a slot the mixing rules already call compatible, the disagreement
+        // costs at most one step around the wheel, which is the error the rules tolerate anyway.
         val runnerUp = CamelotKey.ofPitchClass(secondPitchClass, minor = secondMinor)
-        return if (runnerUp.number == best.number) best else null
+        return if (tieIsCompatible(best, runnerUp)) best else null
     }
+
+    /**
+     * Whether a tie between two candidates is close enough to still name one of them: the same slot,
+     * its relative (same number, other side), or a neighbour on the wheel. A tie with anything else
+     * means the audio does not support a key and the caller hears "unknown".
+     */
+    internal fun tieIsCompatible(best: CamelotKey, runnerUp: CamelotKey): Boolean =
+        best.relationTo(runnerUp) != HarmonicRelation.NONE
 
     /** Energy per pitch class over the whole buffer, folded from the averaged magnitude spectrum. */
     private fun chroma(samples: FloatArray, sampleRate: Int): DoubleArray {

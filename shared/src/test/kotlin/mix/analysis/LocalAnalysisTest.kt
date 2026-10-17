@@ -193,4 +193,31 @@ class LocalAnalysisTest {
         assertNotNull(bpm)
         assertTrue(abs(bpm!! - 123.0) <= 2.0, "expected ~123, got $bpm")
     }
+
+    @Test
+    fun `a track tied with a neighbouring key still names one of them`() {
+        // A minor and D minor share two notes and are one step apart on the wheel: the mixing rules
+        // already tolerate that difference, so the better half is reported instead of nothing.
+        val aMinor = triadLoop(root = 9, minor = true)
+        val dMinor = triadLoop(root = 2, minor = true)
+        val blended = FloatArray(minOf(aMinor.size, dMinor.size)) { i -> (aMinor[i] + dMinor[i]) / 2f }
+
+        val key = LocalAnalysis.key(blended, sampleRate)
+
+        assertNotNull(key)
+        assertTrue(key!!.number in 7..8, "an A minor / D minor tie must land on 7A or 8A, got $key")
+    }
+
+    @Test
+    fun `tie compatibility follows the mixing rules`() {
+        val aMinor = CamelotKey(8, "A")
+
+        assertTrue(LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(8, "A")), "same slot")
+        assertTrue(LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(8, "B")), "relative")
+        assertTrue(LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(7, "A")), "one step down")
+        assertTrue(LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(9, "A")), "one step up")
+        assertTrue(LocalAnalysis.tieIsCompatible(CamelotKey(12, "A"), CamelotKey(1, "A")), "wraps 12 -> 1")
+        assertTrue(!LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(11, "A")), "three steps away")
+        assertTrue(!LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(2, "B")), "distant and other side")
+    }
 }
