@@ -118,10 +118,20 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
         scope.launch {
             detecting = true
             withContext(Dispatchers.IO) {
-                current.tracks.filterNot { it.isAnalysed }.forEach { track ->
-                    val answer = MixAnalysis.resolve(track, lookupProvider)
+                current.tracks.forEach { track ->
+                    // A track with a tempo but no key counts as analysed, so it has to be refilled
+                    // explicitly or its missing half would never be asked for again.
+                    val incomplete = track.bpm == null || track.key == null
+                    val answer = if (incomplete) MixAnalysis.refill(track, lookupProvider)
+                    else MixAnalysis.resolve(track, lookupProvider)
                     if (answer != null) {
-                        MixStore.recordAnalysis(current.id, track.id, answer.bpm, answer.camelot?.toString())
+                        // Keep the half that is already known when only the other one came back.
+                        MixStore.recordAnalysis(
+                            current.id,
+                            track.id,
+                            answer.bpm ?: track.bpm,
+                            answer.camelot?.toString() ?: track.camelot
+                        )
                     }
                 }
             }

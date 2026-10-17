@@ -115,6 +115,26 @@ object MixAnalysis {
         return answer
     }
 
+    /**
+     * Asks [provider] again for [track], whatever the track and the cache already say.
+     *
+     * An earlier attempt can leave half an answer behind — a tempo but no key — and a track with a
+     * tempo counts as analysed, so nothing would ever ask again and the missing half would stay
+     * missing forever. A failure is reported and remembered nowhere, exactly like [resolve].
+     */
+    fun refill(track: MixTrack, provider: BpmKeyProvider?): BpmKey? {
+        val usable = provider?.takeIf { it.isConfigured } ?: return null
+        return try {
+            usable.lookup(track)
+        } catch (e: ProviderUnavailableException) {
+            Log.w("MixAnalysis", "provider unavailable for ${track.id}: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.w("MixAnalysis", "lookup failed for ${track.id}: ${e.message}")
+            null
+        }
+    }
+
     /** Drops the whole cache; the next lookups ask the provider again. */
     fun clear() {
         runCatching { if (file.exists()) file.delete() }

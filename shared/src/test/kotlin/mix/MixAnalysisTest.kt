@@ -171,4 +171,28 @@ class MixAnalysisTest {
         MixAnalysis.clear()
         assertNull(MixAnalysis.cached("YT_MUSIC:abc", now = 1_700_000_000_000L))
     }
+
+    @Test
+    fun `refill asks the provider even when the track already carries a tempo`() {
+        val provider = FakeProvider(BpmKey(bpm = 174.75, camelot = CamelotKey(8, "A"), provider = "fake"))
+        val half = track(bpm = 177.5)
+
+        val answer = MixAnalysis.refill(half, provider)
+
+        assertEquals(1, provider.calls)
+        assertEquals(CamelotKey(8, "A"), answer?.camelot)
+    }
+
+    @Test
+    fun `a refill that fails stores nothing`() {
+        val unavailable = object : BpmKeyProvider {
+            override val name = "unavailable"
+            override val isConfigured = true
+            override fun lookup(artist: String, title: String): BpmKey? =
+                throw ProviderUnavailableException("no audio decoded")
+        }
+
+        assertNull(MixAnalysis.refill(track(bpm = 177.5), unavailable))
+        assertNull(MixAnalysis.cached("YT_MUSIC:abc"), "a failure must not become a remembered answer")
+    }
 }
