@@ -1,17 +1,29 @@
 # mix-view — a DJ set view with BPM/Camelot affinity
 
 Branch: `feat/mix-view` (from `main` @ `abf22e0`)
-Status: in progress
+Status: implemented and verified; not pushed, no PR opened.
 
 | Task | Route | Commit |
 | --- | --- | --- |
-| 1 | `mix/CamelotKey.kt` — key model, notation parsing, harmonic relation, tempo halving | inline, test-first |
-| 2 | `mix/MixModels.kt`, `mix/MixStore.kt` — set/track model and JSON persistence | inline, test-first |
-| 3 | `mix/MixAnalysis.kt` + `mix/GetSongBpm.kt` — cached lookup and the remote provider | inline, test-first |
-| 4 | `mix/MixSuggestions.kt` — affinity ranking engine | inline, test-first |
-| 5 | `desktop/.../ui/MixScreen.kt` + `MIX` nav entry in `App.kt` | inline |
-| 6 | README: the Mix view, the provider key, where the cache lives | inline |
-| 7 | Verify: `./gradlew :shared:test :desktop:compileKotlin` | — |
+| 1 | `mix/CamelotKey.kt` — key model, notation parsing, harmonic relation, tempo halving | inline, test-first | `99bd4a9` |
+| 2 | `mix/MixModels.kt`, `mix/MixStore.kt` — set/track model and JSON persistence | inline, test-first | `99bd4a9` |
+| 3 | `mix/MixAnalysis.kt` + `mix/GetSongBpm.kt` — cached lookup and the remote provider | inline, test-first | `99bd4a9` |
+| 4 | `mix/MixSuggestions.kt` — affinity ranking engine | inline, test-first | `99bd4a9` |
+| 5 | `desktop/.../ui/MixScreen.kt` + `MIX` nav entry in `App.kt` | inline | `d671c68` |
+| 6 | README: the Mix view, the provider key, where the cache lives | inline | `d671c68` |
+| 7 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 344 tests, 0 failures | — | — |
+
+## Delivery
+
+The work landed in two work-unit commits because the shared layer and the screen are reviewable on
+their own: `99bd4a9` (Camelot, set store, lookup, affinity engine + 71 tests) and `d671c68`
+(`MixScreen`, the nav entry, README). The first slice is over the ~400 authored-line guideline
+because the tests for four new units came with it; the boundary to review is the two commits, not
+the branch tip.
+
+Open follow-ups, deliberately out of this slice: manual BPM/key entry for tracks no provider knows
+(the SoundCloud rip case S3 called out), a second `BpmKeyProvider` for a local analyser, and
+dragging rows instead of the arrow buttons.
 
 ## Specs
 
