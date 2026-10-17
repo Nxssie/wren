@@ -109,4 +109,31 @@ class MixDiscoveryTest {
 
         assertTrue(result.isEmpty)
     }
+
+    // ── Repertoire: what the user already has ────────────────────────────────
+
+    @Test
+    fun `the repertoire offers tracks from the other sets, not the current one`() {
+        val current = MixSet(id = "current", name = "now", createdAt = 0, tracks = listOf(track("same", 128.0, "8A")))
+        val other = MixSet(id = "other", name = "old", createdAt = 0, tracks = listOf(track("adjacent", 128.0, "9A")))
+
+        val ranking = MixDiscovery.repertoire(listOf(current, other), "current", anchor)
+
+        assertEquals(listOf("adjacent"), ranking!!.suggestions.map { it.track.id })
+    }
+
+    @Test
+    fun `a track kept in two sets is offered once`() {
+        val a = MixSet(id = "a", name = "a", createdAt = 0, tracks = listOf(track("same", 128.0, "8A")))
+        val b = MixSet(id = "b", name = "b", createdAt = 0, tracks = listOf(track("same", 128.0, "8A")))
+
+        val ranking = MixDiscovery.repertoire(listOf(a, b), "current", anchor)
+
+        assertEquals(listOf("same"), ranking!!.suggestions.map { it.track.id })
+    }
+
+    @Test
+    fun `there is no repertoire to rank without an anchor`() {
+        assertNull(MixDiscovery.repertoire(emptyList(), null, anchor = null))
+    }
 }

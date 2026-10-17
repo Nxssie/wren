@@ -27,6 +27,29 @@ data class Discovery(
 object MixDiscovery {
 
     /**
+     * What the user already has that mixes with [anchor], drawn from every set except
+     * [currentSetId].
+     *
+     * The set being edited is excluded because its own tracks are already listed as in-set
+     * suggestions; a repertoire suggestion is precisely the track sitting in another set. Null when
+     * there is no anchor to rank against.
+     */
+    fun repertoire(
+        sets: List<MixSet>,
+        currentSetId: String?,
+        anchor: MixTrack?,
+        filters: MixFilters = MixFilters()
+    ): MixRanking? {
+        if (anchor == null) return null
+        val pool = sets
+            .filterNot { it.id == currentSetId }
+            .flatMap { it.tracks }
+            .distinctBy { it.id }
+        return MixSuggestions.rank(anchor, pool, filters)
+    }
+
+
+    /**
      * Resolves [candidates] against [anchor], or against nothing when the set is still empty and
      * there is no anchor to rank from.
      *

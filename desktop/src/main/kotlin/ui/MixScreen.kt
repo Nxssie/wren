@@ -104,6 +104,11 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
     val discovered = remember(results, anchor, filters) {
         MixDiscovery.of(anchor, results.map { it.toMixTrack() }, filters)
     }
+    // What the user already has elsewhere that mixes with the anchor: the set being edited is
+    // excluded, because its own tracks are the in-set list just above.
+    val repertoire = remember(sets, set?.id, anchor, filters) {
+        MixDiscovery.repertoire(sets, set?.id, anchor, filters)
+    }
 
     fun mutate(block: () -> List<MixSet>) {
         scope.launch {
@@ -136,6 +141,31 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
                 }
             }
             reload()
+            detecting = false
+        }
+    }
+
+    /**
+     * Puts [track] in the set and, when it carries no analysis yet, runs the one decode that makes
+     * it scoreable. Without that the new row sits at "—" until someone presses detect.
+     */
+    fun addToSet(track: MixTrack) {
+        val current = set ?: return
+        scope.launch {
+            val updated = withContext(Dispatchers.IO) {
+                runCatching { MixStore.addTrack(current.id, track) }.getOrDefault(sets)
+            }
+            sets = updated
+            if (track.isAnalysed) return@launch
+
+            detecting = true
+            val analysed = withContext(Dispatchers.IO) {
+                val answer = MixAnalysis.refill(track, lookupProvider) ?: return@withContext null
+                runCatching {
+                    MixStore.recordAnalysis(current.id, track.id, answer.bpm, answer.camelot?.toString())
+                }.getOrNull()
+            }
+            if (analysed != null) sets = analysed
             detecting = false
         }
     }
@@ -177,6 +207,7 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
             anchor = anchor,
             inSet = inSet,
             discovered = discovered,
+            repertoire = repertoire,
             detecting = detecting,
             lookupConfigured = lookupProvider.isConfigured,
             providerLabel = provider.platform.label,
@@ -192,7 +223,7 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
                 val index = tracks.indexOfFirst { it.id == track.id }
                 if (index >= 0) player.loadQueue(tracks.map { it.toQueueItem() }, index)
             },
-            onAdd = { track -> set?.let { s -> mutate { MixStore.addTrack(s.id, track) } } },
+            onAdd = ::addToSet,
             onAnchor = { anchorId = it.id },
             query = query,
             onQuery = { query = it },
@@ -412,6 +443,7 @@ private fun NextPane(
     anchor: MixTrack?,
     inSet: MixRanking?,
     discovered: Discovery,
+    repertoire: MixRanking?,
     detecting: Boolean,
     lookupConfigured: Boolean,
     providerLabel: String,
@@ -509,6 +541,20 @@ private fun NextPane(
                 action = null,
                 onPlay = onPlay,
                 onAnchor = onAnchor
+            )
+        }
+
+        if (repertoire != null && (repertoire.suggestions.isNotEmpty() || repertoire.unranked.isNotEmpty())) {
+            Spacer(Modifier.height(16.dp))
+            Text("_repertoire;", color = PsPearl300.copy(alpha = 0.6f), fontFamily = FontMono, fontSize = 9.sp, letterSpacing = 1.7.sp)
+            Spacer(Modifier.height(6.dp))
+            SuggestionList(
+                ranking = repertoire,
+                emptyText = "nothing else in your sets mixes with this anchor",
+                action = "+",
+                onPlay = onPlay,
+                onAnchor = onAnchor,
+                onAdd = onAdd
             )
         }
 
