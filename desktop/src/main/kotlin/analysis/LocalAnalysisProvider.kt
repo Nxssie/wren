@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import mix.BpmKey
 import mix.BpmKeyProvider
 import mix.MixTrack
+import mix.ProviderUnavailableException
 import mix.analysis.LocalAnalysis
 import util.Log
 
@@ -30,8 +31,13 @@ class LocalAnalysisProvider(
     override fun lookup(artist: String, title: String): BpmKey? = null
 
     override fun lookup(track: MixTrack): BpmKey? {
-        val streamUrl = resolve(track.videoId) ?: return null
-        val samples = decode(streamUrl) ?: return null
+        // No stream URL or no samples is not an answer about the track: it is the pipeline failing,
+        // so it throws instead of returning null and the caller does not remember it as a miss.
+        val streamUrl = resolve(track.videoId)
+            ?: throw ProviderUnavailableException("no stream url for ${track.id}")
+        val samples = decode(streamUrl)
+            ?: throw ProviderUnavailableException("no audio decoded for ${track.id}")
+
         val answer = LocalAnalysis.bpmKey(samples, AudioSamples.TARGET_SAMPLE_RATE)
         if (answer == null) Log.w("LocalAnalysis", "no tempo or key in ${track.id}")
         return answer

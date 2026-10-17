@@ -109,6 +109,24 @@ class MixAnalysisTest {
     }
 
     @Test
+    fun `a provider that could not answer is asked again instead of being cached as a miss`() {
+        var calls = 0
+        val unavailable = object : BpmKeyProvider {
+            override val name = "unavailable"
+            override val isConfigured = true
+            override fun lookup(artist: String, title: String): BpmKey? {
+                calls++
+                throw ProviderUnavailableException("no audio decoded")
+            }
+        }
+
+        assertNull(MixAnalysis.resolve(track(), unavailable))
+        assertNull(MixAnalysis.resolve(track(), unavailable))
+
+        assertEquals(2, calls, "a failure is not a fact about the track, so it must not be remembered")
+    }
+
+    @Test
     fun `no provider at all leaves the track unknown`() {
         assertNull(MixAnalysis.resolve(track(), provider = null, now = 1L))
     }

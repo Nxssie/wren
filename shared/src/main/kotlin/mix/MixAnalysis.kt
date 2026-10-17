@@ -88,9 +88,20 @@ object MixAnalysis {
         entryFor(track.id, now)?.let { if (!it.found) return null }
 
         val usable = provider?.takeIf { it.isConfigured } ?: return null
-        val answer = runCatching { usable.lookup(track) }
-            .onFailure { Log.w("MixAnalysis", "lookup failed for ${track.id}: ${it.message}") }
-            .getOrNull()
+
+        // A provider that could not answer is not a provider that does not know the track. Caching
+        // this as a miss would keep the track unknown for MISS_TTL_MS because of one flaky moment —
+        // a yt-dlp that was not installed yet, a network that dropped — so a failure returns without
+        // touching the cache and the next attempt asks again.
+        val answer = try {
+            usable.lookup(track)
+        } catch (e: ProviderUnavailableException) {
+            Log.w("MixAnalysis", "provider unavailable for ${track.id}: ${e.message}")
+            return null
+        } catch (e: Exception) {
+            Log.w("MixAnalysis", "lookup failed for ${track.id}: ${e.message}")
+            return null
+        }
 
         val entries = read()
         entries[track.id] = Entry(
@@ -110,3 +121,10 @@ object MixAnalysis {
             .onFailure { Log.w("MixAnalysis", "could not clear the analysis cache: ${it.message}") }
     }
 }
+
+/**
+ * A provider that could not get what it needed to answer at all — no stream URL, no audio samples,
+ * no network. It is deliberately distinct from returning `null`, which means "I looked and there is
+ * nothing": only the latter is worth remembering, because only the latter is a fact about the track.
+ */
+class ProviderUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
