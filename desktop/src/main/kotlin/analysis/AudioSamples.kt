@@ -16,7 +16,12 @@ object AudioSamples {
     /** 22.05 kHz covers everything up to 11 kHz — plenty for onsets and pitch classes. */
     const val TARGET_SAMPLE_RATE = 22_050
 
-    const val DEFAULT_SECONDS = 20.0
+    /**
+     * Twenty seconds were not enough: measured on a drum & bass track whose tempo is 172, the first
+     * twenty seconds are an intro at 174.8 and the full track reads 172.0. A minute covers the drop
+     * and the main body without decoding the whole file.
+     */
+    const val DEFAULT_SECONDS = 60.0
 
     /**
      * Decodes at most [seconds] of [streamUrl] into mono samples in [-1, 1].
