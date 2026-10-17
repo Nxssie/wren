@@ -1,6 +1,7 @@
 package player
 
 import api.ListeningHistory
+import api.forgetStreamUrl
 import api.resolveStreamUrl
 import api.warmupStreamConnection
 import androidx.compose.runtime.MutableState
@@ -249,7 +250,7 @@ class FFmpegPlayer {
             }
     }
 
-    private suspend fun loadInternal(item: QueueItem, resolvedUrl: String) {
+    private suspend fun loadInternal(item: QueueItem, resolvedUrl: String, allowFreshRetry: Boolean = true) {
         val videoId = item.videoId
         val title = item.title
         Log.i("FFmpegPlayer", "Loading videoId=$videoId title=\"$title\"")
@@ -332,11 +333,32 @@ class FFmpegPlayer {
                 schedulePreloadNext()
 
             } catch (e: Exception) {
-                Log.e("FFmpegPlayer", "Failed to load stream for videoId=$videoId", e)
+                val refused = isProviderRefusal(e)
+                if (refused) {
+                    // A provider refusal (googlevideo answering 403) is one line of fact, not a
+                    // stack trace: the frames say nothing, and a wall of them hides the reason.
+                    Log.w("FFmpegPlayer", "Stream refused (HTTP 403) for videoId=$videoId — the provider will not serve this client")
+                } else {
+                    Log.e("FFmpegPlayer", "Failed to load stream for videoId=$videoId", e)
+                }
                 isLoading.value = false
                 isEnqueuing.value = false
                 isPlaying.value = false
                 isPlayingInternal.set(false)
+
+                // One retry with a freshly resolved URL before skipping the track. Stream URLs
+                // are bound to the IP that asked for them and carry an expiry, so a cached one
+                // can be dead while the track itself is fine; the retry is bounded by the flag
+                // so a permanently refused track cannot loop here.
+                if (allowFreshRetry) {
+                    forgetStreamUrl(videoId)
+                    val fresh = resolveStreamUrl(videoId)
+                    if (fresh != null && fresh != resolvedUrl) {
+                        Log.i("FFmpegPlayer", "Retrying videoId=$videoId with a freshly resolved URL")
+                        loadInternal(item, fresh, allowFreshRetry = false)
+                        return@launch
+                    }
+                }
 
                 consecutiveLoadFailures++
                 if (consecutiveLoadFailures > maxConsecutiveLoadFailures) {
@@ -346,6 +368,16 @@ class FFmpegPlayer {
                 }
             }
         }
+    }
+
+    /**
+     * Whether [e] is the provider refusing to serve the stream rather than a local failure.
+     * FFmpeg reports it as an open/read error whose message carries the HTTP status ("HTTP error
+     * 403 Forbidden" / "Server returned 403 Forbidden"); anything else keeps its stack trace.
+     */
+    private fun isProviderRefusal(e: Throwable): Boolean {
+        val message = e.message.orEmpty()
+        return "403" in message || "Forbidden" in message
     }
 
     /** Writes the running measurement for the track playing now, off the playback thread. */
