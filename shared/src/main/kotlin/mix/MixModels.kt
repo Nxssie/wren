@@ -1,6 +1,7 @@
 package mix
 
 import kotlinx.serialization.Serializable
+import models.QueueItem
 import models.SearchResult
 import models.Source
 
@@ -29,6 +30,23 @@ data class MixTrack(
 
     /** True when this track can take part in an affinity comparison. */
     val isAnalysed: Boolean get() = key != null || (bpm ?: 0.0) > 0.0
+
+    val url: String
+        get() = when (source) {
+            Source.YT_MUSIC -> "https://music.youtube.com/watch?v=$videoId"
+            Source.YOUTUBE -> "https://www.youtube.com/watch?v=$videoId"
+            Source.SOUNDCLOUD -> videoId
+        }
+
+    /** The queue shape, so a set can be played straight from the Mix view. */
+    fun toQueueItem(): QueueItem = QueueItem(
+        url = url,
+        videoId = videoId,
+        title = title,
+        artist = artist,
+        artworkUrl = artworkUrl,
+        source = source
+    )
 }
 
 /**
