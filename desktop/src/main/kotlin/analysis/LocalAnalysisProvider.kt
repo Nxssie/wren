@@ -38,7 +38,7 @@ class LocalAnalysisProvider(
         val samples = decode(streamUrl)
             ?: throw ProviderUnavailableException("no audio decoded for ${track.id}")
 
-        val answer = LocalAnalysis.bpmKey(samples, AudioSamples.TARGET_SAMPLE_RATE)
+        val answer = LocalAnalysis.analyse(samples, AudioSamples.TARGET_SAMPLE_RATE)
         if (answer == null) Log.w("LocalAnalysis", "no tempo or key in ${track.id}")
         return answer
     }

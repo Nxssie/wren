@@ -17,11 +17,12 @@ object AudioSamples {
     const val TARGET_SAMPLE_RATE = 22_050
 
     /**
-     * Twenty seconds were not enough: measured on a drum & bass track whose tempo is 172, the first
-     * twenty seconds are an intro at 174.8 and the full track reads 172.0. A minute covers the drop
-     * and the main body without decoding the whole file.
+     * Six minutes, which covers a normal track end to end and stops a DJ mix or a live set from
+     * turning one detection into a long download. The analyser weighs the parts of this buffer
+     * against each other, so a fixed short window is not needed any more: twenty seconds sampled
+     * the intro of a track whose body is what the answer should describe.
      */
-    const val DEFAULT_SECONDS = 60.0
+    const val DEFAULT_SECONDS = 360.0
 
     /**
      * Decodes at most [seconds] of [streamUrl] into mono samples in [-1, 1].

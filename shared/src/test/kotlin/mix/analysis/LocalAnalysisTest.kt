@@ -220,4 +220,58 @@ class LocalAnalysisTest {
         assertTrue(!LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(11, "A")), "three steps away")
         assertTrue(!LocalAnalysis.tieIsCompatible(aMinor, CamelotKey(2, "B")), "distant and other side")
     }
+
+    // ── The main part of a whole track ───────────────────────────────────────
+
+    @Test
+    fun `an intro at another tempo does not decide the tempo of the track`() {
+        // A quiet 90 BPM intro, then the loud 128 BPM body: the body is what the track is.
+        val intro = clickTrain(90.0, seconds = 20.0).map { it * 0.25f }.toFloatArray()
+        val body = clickTrain(128.0, seconds = 60.0)
+        val track = intro + body
+
+        val bpm = LocalAnalysis.analyse(track, sampleRate)?.bpm
+
+        assertNotNull(bpm)
+        assertTrue(abs(bpm!! - 128.0) <= 2.0, "expected the 128 BPM body, got $bpm")
+    }
+
+    @Test
+    fun `a quiet intro in another key does not decide the key of the track`() {
+        val intro = triadLoop(root = 0, minor = false, seconds = 20.0).map { it * 0.25f }.toFloatArray()
+        val body = triadLoop(root = 9, minor = true, seconds = 60.0)
+        val track = intro + body
+
+        val key = LocalAnalysis.analyse(track, sampleRate)?.camelot
+
+        assertEquals(CamelotKey(8, "A"), key, "the body is A minor; the C major intro is the quiet part")
+    }
+
+    @Test
+    fun `a track that is uniform reads the same as a single window`() {
+        val uniform = clickTrain(128.0, seconds = 80.0)
+
+        val whole = LocalAnalysis.analyse(uniform, sampleRate)?.bpm
+        val single = LocalAnalysis.tempo(uniform, sampleRate)
+
+        assertNotNull(whole)
+        assertTrue(abs(whole!! - single!!) <= 2.0, "whole=$whole single=$single")
+    }
+
+    @Test
+    fun `silence has nothing to analyse`() {
+        assertNull(LocalAnalysis.analyse(FloatArray(sampleRate * 60), sampleRate))
+    }
+
+    @Test
+    fun `a modulation after the opening minute does not change the key`() {
+        // The key is measured over the opening minute on purpose: on real tracks, averaging a later
+        // modulation in produced a key that matched neither section.
+        val opening = triadLoop(root = 9, minor = true, seconds = 60.0)
+        val laterLoud = triadLoop(root = 2, minor = true, seconds = 40.0).map { it * 1.2f }.toFloatArray()
+
+        val key = LocalAnalysis.analyse(opening + laterLoud, sampleRate)?.camelot
+
+        assertEquals(CamelotKey(8, "A"), key)
+    }
 }
