@@ -30,6 +30,12 @@ object LocalAnalysis {
     /** Resolution of the tempo search: 0.25 BPM is well inside what a DJ would notice. */
     private const val BPM_STEP = 0.25
 
+    /** Octave relatives of the winning period: half tempo, as found, double tempo. */
+    private val OCTAVE_FACTORS = doubleArrayOf(0.5, 1.0, 2.0)
+
+    /** A DJ set lives around this tempo, so an ambiguous octave is resolved towards it. */
+    private const val TEMPO_PRIOR_BPM = 128.0
+
     /**
      * How much worse a faster tempo may score and still be preferred over its slower octave.
      *
@@ -88,26 +94,42 @@ object LocalAnalysis {
         if (envelope.sum() <= 1e-6) return null
 
         val hopSeconds = ONSET_HOP.toDouble() / sampleRate
-        val scores = LinkedHashMap<Double, Double>()
-
+        val grid = ArrayList<Pair<Double, Double>>()
         var bpm = MIN_BPM
         while (bpm <= MAX_BPM) {
-            val lag = 60.0 / bpm / hopSeconds
-            scores[bpm] = correlationAtLag(envelope, lag)
+            grid.add(bpm to correlationAtLag(envelope, 60.0 / bpm / hopSeconds))
             bpm += BPM_STEP
         }
 
-        val best = scores.values.maxOrNull() ?: return null
+        val peakIndex = grid.indices.maxByOrNull { grid[it].second } ?: return null
+        val best = grid[peakIndex].second
         if (best <= 0.0) return null
 
-        // Two tempi that explain the signal equally well differ by an octave: prefer the faster one,
-        // because the slower reading can always be produced by skipping beats. The grid is walked
-        // from the fastest candidate down, so the first one inside the tolerance is the fastest.
-        val chosen = scores.keys
-            .sortedDescending()
-            .firstOrNull { (scores[it] ?: 0.0) >= best * OCTAVE_TOLERANCE }
-            ?: return null
-        return chosen
+        // Only the global peak and its octaves are candidates. Everything else is a neighbour of the
+        // winning period, and picking the shortest lag inside a band was measurably wrong on real
+        // music: the autocorrelation curve is broad, so a much faster lag scored within 10% of the
+        // true one and One More Time (123 BPM) came out at 176.
+        val candidates = OCTAVE_FACTORS
+            .map { grid[peakIndex].first * it }
+            .filter { it in MIN_BPM..MAX_BPM }
+            .map { near -> indexOfNearest(grid, near) }
+            .filter { it >= 0 }
+            .map { index -> grid[index] }
+            .filter { (_, score) -> score >= best * OCTAVE_TOLERANCE }
+
+        if (candidates.isEmpty()) return grid[peakIndex].first
+
+        // Everything inside a fifth of this is what a DJ set is built around, so the octave is
+        // resolved in favour of whichever candidate sits closest to it.
+        return candidates.minByOrNull { (candidate, _) -> abs(ln(candidate / TEMPO_PRIOR_BPM)) }!!.first
+    }
+
+    /** Index of the grid entry whose tempo is closest to [bpm], or -1 when the grid is empty. */
+    private fun indexOfNearest(grid: List<Pair<Double, Double>>, bpm: Double): Int {
+        if (grid.isEmpty()) return -1
+        val raw = (bpm - MIN_BPM) / BPM_STEP
+        val index = raw.roundToInt().coerceIn(0, grid.lastIndex)
+        return if (abs(raw - index) <= 0.5) index else -1
     }
 
     /** Positive frame-to-frame energy increase per frame; percussive events show up as spikes. */

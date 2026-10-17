@@ -185,4 +185,12 @@ class LocalAnalysisTest {
         assertNotNull(key)
         assertEquals(8, key!!.number, "an A minor / C major tie must land on the same Camelot number")
     }
+
+    @Test
+    fun `a 123 bpm pulse train reads 123`() {
+        val bpm = LocalAnalysis.tempo(clickTrain(123.0), sampleRate)
+
+        assertNotNull(bpm)
+        assertTrue(abs(bpm!! - 123.0) <= 2.0, "expected ~123, got $bpm")
+    }
 }
