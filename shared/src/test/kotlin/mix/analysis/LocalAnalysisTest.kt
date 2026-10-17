@@ -170,4 +170,19 @@ class LocalAnalysisTest {
 
         assertEquals(CamelotKey(8, "B"), LocalAnalysis.key(mixed, sampleRate))
     }
+
+    @Test
+    fun `a track tied between a key and its relative still names one of them`() {
+        // A minor and C major share every note, so a loop that touches both scores them almost
+        // identically. Both slots mix with the same neighbours, so naming the better half is useful
+        // information; a silence is not.
+        val aMinor = triadLoop(root = 9, minor = true)
+        val cMajor = triadLoop(root = 0, minor = false)
+        val blended = FloatArray(minOf(aMinor.size, cMajor.size)) { i -> (aMinor[i] + cMajor[i]) / 2f }
+
+        val key = LocalAnalysis.key(blended, sampleRate)
+
+        assertNotNull(key)
+        assertEquals(8, key!!.number, "an A minor / C major tie must land on the same Camelot number")
+    }
 }

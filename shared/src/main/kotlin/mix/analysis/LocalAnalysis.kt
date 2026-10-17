@@ -173,6 +173,8 @@ object LocalAnalysis {
         var secondScore = Double.NEGATIVE_INFINITY
         var bestPitchClass = -1
         var bestMinor = false
+        var secondPitchClass = -1
+        var secondMinor = false
 
         for (minor in booleanArrayOf(false, true)) {
             val profile = if (minor) MINOR_PROFILE else MAJOR_PROFILE
@@ -180,19 +182,30 @@ object LocalAnalysis {
                 val score = correlated(chroma, profile, tonic) / total
                 if (score > bestScore) {
                     secondScore = bestScore
+                    secondPitchClass = bestPitchClass
+                    secondMinor = bestMinor
                     bestScore = score
                     bestPitchClass = tonic
                     bestMinor = minor
                 } else if (score > secondScore) {
                     secondScore = score
+                    secondPitchClass = tonic
+                    secondMinor = minor
                 }
             }
         }
 
         if (bestPitchClass < 0) return null
+        val best = CamelotKey.ofPitchClass(bestPitchClass, minor = bestMinor)
+
         // A flat chroma matches every rotation about equally; that is not a key, it is noise.
-        if (secondScore.isFinite() && bestScore - secondScore < MIN_KEY_CONFIDENCE) return null
-        return CamelotKey.ofPitchClass(bestPitchClass, minor = bestMinor)
+        if (!secondScore.isFinite() || bestScore - secondScore >= MIN_KEY_CONFIDENCE) return best
+
+        // Half the material that straddles a relative pair scores the two sides almost identically:
+        // A minor and C major share every note. That is not noise, and the two slots mix with the
+        // same neighbours, so the better half is reported. Two distant slots tied are still unknown.
+        val runnerUp = CamelotKey.ofPitchClass(secondPitchClass, minor = secondMinor)
+        return if (runnerUp.number == best.number) best else null
     }
 
     /** Energy per pitch class over the whole buffer, folded from the averaged magnitude spectrum. */
