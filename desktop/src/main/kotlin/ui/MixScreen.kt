@@ -1,5 +1,6 @@
 package ui
 
+import analysis.LocalAnalysisProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,7 +36,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mix.Affinity
 import mix.Discovery
-import mix.GetSongBpmProvider
 import mix.MixAnalysis
 import mix.MixDiscovery
 import mix.MixFilters
@@ -61,7 +61,7 @@ private val TOLERANCES = listOf(3.0, 6.0, 9.0, 12.0)
 @Composable
 fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
     val scope = rememberCoroutineScope()
-    val lookupProvider = remember { GetSongBpmProvider() }
+    val lookupProvider = remember { LocalAnalysisProvider() }
 
     var sets by remember { mutableStateOf<List<MixSet>>(emptyList()) }
     var selectedSetId by remember { mutableStateOf<String?>(null) }
@@ -479,7 +479,7 @@ private fun NextPane(
             }
             Spacer(Modifier.width(10.dp))
             Text(
-                if (lookupConfigured) "via getsongbpm" else "set WREN_GETSONGBPM_KEY to detect",
+                if (lookupConfigured) "analysed from the audio" else "no analyser available",
                 color = if (lookupConfigured) PsSteel400 else PsSignalDanger,
                 fontFamily = FontMono,
                 fontSize = 10.sp

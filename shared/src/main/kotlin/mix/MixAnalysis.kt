@@ -88,7 +88,7 @@ object MixAnalysis {
         entryFor(track.id, now)?.let { if (!it.found) return null }
 
         val usable = provider?.takeIf { it.isConfigured } ?: return null
-        val answer = runCatching { usable.lookup(track.artist, track.title) }
+        val answer = runCatching { usable.lookup(track) }
             .onFailure { Log.w("MixAnalysis", "lookup failed for ${track.id}: ${it.message}") }
             .getOrNull()
 
