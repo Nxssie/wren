@@ -33,15 +33,17 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import mix.Affinity
+import mix.Discovery
 import mix.GetSongBpmProvider
 import mix.MixAnalysis
+import mix.MixDiscovery
 import mix.MixFilters
 import mix.MixRanking
 import mix.MixSet
 import mix.MixStore
 import mix.MixSuggestions
 import mix.MixTrack
-import mix.Suggestion
 import mix.toMixTrack
 import models.SearchResult
 import player.FFmpegPlayer
@@ -97,8 +99,10 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
     val inSet = remember(set, anchor, filters) {
         anchor?.let { MixSuggestions.rank(it, set.tracks, filters) }
     }
+    // Ranked against the anchor when there is one, offered as they came otherwise: this pane is the
+    // only way to put a track into a set, so it cannot depend on the set already holding one.
     val discovered = remember(results, anchor, filters) {
-        anchor?.let { a -> MixSuggestions.rank(a, results.map { it.toMixTrack() }, filters) }
+        MixDiscovery.of(anchor, results.map { it.toMixTrack() }, filters)
     }
 
     fun mutate(block: () -> List<MixSet>) {
@@ -183,8 +187,7 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
             query = query,
             onQuery = { query = it },
             searching = searching,
-            onSearch = ::discover,
-            results = results
+            onSearch = ::discover
         )
     }
 }
@@ -403,7 +406,7 @@ private fun NextPane(
     modifier: Modifier,
     anchor: MixTrack?,
     inSet: MixRanking?,
-    discovered: MixRanking?,
+    discovered: Discovery,
     detecting: Boolean,
     lookupConfigured: Boolean,
     providerLabel: String,
@@ -420,8 +423,7 @@ private fun NextPane(
     query: String,
     onQuery: (String) -> Unit,
     searching: Boolean,
-    onSearch: () -> Unit,
-    results: List<SearchResult>
+    onSearch: () -> Unit
 ) {
     Column(modifier) {
         Text("_next_up;", color = PsPearl300.copy(alpha = 0.6f), fontFamily = FontMono, fontSize = 9.sp, letterSpacing = 1.7.sp)
@@ -487,7 +489,12 @@ private fun NextPane(
         Spacer(Modifier.height(14.dp))
 
         if (anchor == null) {
-            Text("nothing to mix from yet", color = TextSecondary, fontFamily = FontMono, fontSize = 12.sp)
+            Text(
+                "nothing to mix from yet — search below to add the first track",
+                color = TextSecondary,
+                fontFamily = FontMono,
+                fontSize = 12.sp
+            )
         } else {
             Text("_in_set;", color = PsPearl300.copy(alpha = 0.6f), fontFamily = FontMono, fontSize = 9.sp, letterSpacing = 1.7.sp)
             Spacer(Modifier.height(6.dp))
@@ -498,49 +505,49 @@ private fun NextPane(
                 onPlay = onPlay,
                 onAnchor = onAnchor
             )
-
-            Spacer(Modifier.height(16.dp))
-            Text("_discover;", color = PsPearl300.copy(alpha = 0.6f), fontFamily = FontMono, fontSize = 9.sp, letterSpacing = 1.7.sp)
-            Spacer(Modifier.height(6.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQuery,
-                    placeholder = {
-                        Text("_search_$providerLabel;", color = PsSteel400, fontFamily = FontMono, fontSize = 12.sp)
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f).onKeyEvent { e ->
-                        if (e.key == Key.Enter && e.type == KeyEventType.KeyUp) { onSearch(); true } else false
-                    },
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = TextPrimary,
-                        cursorColor = TextPrimary,
-                        focusedBorderColor = TextPrimary,
-                        unfocusedBorderColor = PsPearl200,
-                        backgroundColor = Surface,
-                        placeholderColor = PsSteel400
-                    )
-                )
-                Spacer(Modifier.width(8.dp))
-                IconButton(onClick = onSearch, modifier = Modifier.size(44.dp).background(PsInk900)) {
-                    if (searching) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PsWhite, strokeWidth = 1.5.dp)
-                    else Icon(Icons.Default.Search, contentDescription = "Search", tint = PsWhite)
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            SuggestionList(
-                ranking = discovered,
-                emptyText = if (results.isEmpty()) "search for candidates to add" else "none of these mix with the anchor under these filters",
-                action = "+",
-                onPlay = onPlay,
-                onAnchor = onAnchor,
-                onAdd = onAdd
-            )
         }
+
+        // Always rendered: an empty set has no anchor to rank from, and this is how it gets one.
+        Spacer(Modifier.height(16.dp))
+        Text("_discover;", color = PsPearl300.copy(alpha = 0.6f), fontFamily = FontMono, fontSize = 9.sp, letterSpacing = 1.7.sp)
+        Spacer(Modifier.height(6.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                placeholder = {
+                    Text("_search_$providerLabel;", color = PsSteel400, fontFamily = FontMono, fontSize = 12.sp)
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(0.dp),
+                modifier = Modifier.weight(1f).onKeyEvent { e ->
+                    if (e.key == Key.Enter && e.type == KeyEventType.KeyUp) { onSearch(); true } else false
+                },
+                colors = TextFieldDefaults.outlinedTextFieldColors(
+                    textColor = TextPrimary,
+                    cursorColor = TextPrimary,
+                    focusedBorderColor = TextPrimary,
+                    unfocusedBorderColor = PsPearl200,
+                    backgroundColor = Surface,
+                    placeholderColor = PsSteel400
+                )
+            )
+            Spacer(Modifier.width(8.dp))
+            IconButton(onClick = onSearch, modifier = Modifier.size(44.dp).background(PsInk900)) {
+                if (searching) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PsWhite, strokeWidth = 1.5.dp)
+                else Icon(Icons.Default.Search, contentDescription = "Search", tint = PsWhite)
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        DiscoverList(
+            discovery = discovered,
+            emptyText = if (searching) "searching…" else "search for candidates to add",
+            onPlay = onPlay,
+            onAnchor = onAnchor,
+            onAdd = onAdd
+        )
     }
 }
 
@@ -583,7 +590,14 @@ private fun SuggestionList(
 
     LazyColumn(Modifier.heightIn(max = 220.dp)) {
         items(suggestions, key = { it.track.id }) { item ->
-            SuggestionRow(item = item, action = action, onPlay = onPlay, onAnchor = onAnchor, onAdd = onAdd)
+            TrackRow(
+                track = item.track,
+                affinity = item.affinity,
+                action = action,
+                onPlay = onPlay,
+                onAnchor = onAnchor,
+                onAdd = onAdd
+            )
         }
     }
     if ((ranking?.unranked?.size ?: 0) > 0) {
@@ -596,9 +610,43 @@ private fun SuggestionList(
     }
 }
 
+/**
+ * The discover pane: the ranked matches first, then every candidate the engine could not score.
+ * Each row can be added, because a track with no tempo or key yet is exactly the case a set has to
+ * accept before it can be analysed.
+ */
 @Composable
-private fun SuggestionRow(
-    item: Suggestion,
+private fun DiscoverList(
+    discovery: Discovery,
+    emptyText: String,
+    onPlay: (MixTrack) -> Unit,
+    onAnchor: (MixTrack) -> Unit,
+    onAdd: (MixTrack) -> Unit
+) {
+    val rows = discovery.all
+    if (rows.isEmpty()) {
+        Text(emptyText, color = TextSecondary, fontFamily = FontMono, fontSize = 11.sp)
+        return
+    }
+
+    LazyColumn(Modifier.heightIn(max = 260.dp)) {
+        items(rows, key = { it.track.id }) { row ->
+            TrackRow(
+                track = row.track,
+                affinity = row.affinity,
+                action = "+",
+                onPlay = onPlay,
+                onAnchor = onAnchor,
+                onAdd = onAdd
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrackRow(
+    track: MixTrack,
+    affinity: Affinity?,
     action: String?,
     onPlay: (MixTrack) -> Unit,
     onAnchor: (MixTrack) -> Unit,
@@ -615,20 +663,21 @@ private fun SuggestionRow(
                     strokeWidth = 1f
                 )
             }
-            .clickable { onAnchor(item.track) }
+            .clickable { onAnchor(track) }
             .padding(vertical = 7.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                item.track.title,
+                track.title,
                 color = TextPrimary,
                 fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                item.affinity.reasons.joinToString(" · "),
+                affinity?.reasons?.joinToString(" · ")?.takeIf { it.isNotBlank() }
+                    ?: "no tempo or key yet — detect it after adding",
                 color = TextSecondary,
                 fontFamily = FontMono,
                 fontSize = 10.sp,
@@ -638,18 +687,20 @@ private fun SuggestionRow(
         }
         Spacer(Modifier.width(8.dp))
         Text(
-            item.affinity.score.toString(),
-            color = PsInk900,
+            affinity?.score?.toString() ?: "—",
+            color = if (affinity != null) PsInk900 else PsSteel400,
             fontFamily = FontMono,
             fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.background(PsIrisCyan).padding(horizontal = 6.dp, vertical = 3.dp)
+            modifier = Modifier
+                .background(if (affinity != null) PsIrisCyan else PsInset)
+                .padding(horizontal = 6.dp, vertical = 3.dp)
         )
-        IconButton(onClick = { onPlay(item.track) }, modifier = Modifier.size(26.dp)) {
+        IconButton(onClick = { onPlay(track) }, modifier = Modifier.size(26.dp)) {
             Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = PsSteel400, modifier = Modifier.size(16.dp))
         }
         if (action != null && onAdd != null) {
-            IconButton(onClick = { onAdd(item.track) }, modifier = Modifier.size(26.dp)) {
+            IconButton(onClick = { onAdd(track) }, modifier = Modifier.size(26.dp)) {
                 Icon(Icons.Default.Add, contentDescription = "Add to set", tint = PsSteel400, modifier = Modifier.size(16.dp))
             }
         }
