@@ -1,6 +1,7 @@
 package mix
 
 import kotlinx.serialization.Serializable
+import java.util.Locale
 import models.QueueItem
 import models.SearchResult
 import models.Source
@@ -30,6 +31,21 @@ data class MixTrack(
 
     /** True when this track can take part in an affinity comparison. */
     val isAnalysed: Boolean get() = key != null || (bpm ?: 0.0) > 0.0
+
+    /**
+     * What the analysis chip shows. `unknown` means nothing was analysed at all; a `?` on one side
+     * means that half was analysed and could not be determined, which is a different fact from "not
+     * looked at yet" and must not be shown the same way.
+     */
+    val analysisLabel: String
+        get() {
+            val tempo = bpm?.let { value ->
+                if (value == value.toLong().toDouble()) value.toLong().toString()
+                else String.format(Locale.ROOT, "%.1f", value)
+            }
+            if (tempo == null && key == null) return "unknown"
+            return "${tempo ?: "?"} · ${key?.toString() ?: "?"}"
+        }
 
     val url: String
         get() = when (source) {

@@ -141,4 +141,33 @@ class LocalAnalysisTest {
 
         assertTrue(answer == null || (answer.bpm == null && answer.camelot == null))
     }
+
+    /** Deterministic broadband bursts: the percussive half of a drum-led remix. */
+    private fun noiseBursts(bpm: Double, seconds: Double = 8.0): FloatArray {
+        val samples = FloatArray((sampleRate * seconds).toInt())
+        val period = (60.0 / bpm * sampleRate).toInt()
+        val burst = (0.05 * sampleRate).toInt()
+        var seed = 12_345L
+        var start = 0
+        while (start < samples.size) {
+            for (i in 0 until burst) {
+                val index = start + i
+                if (index >= samples.size) break
+                seed = (seed * 6_364_136_223_846_793_005L + 1_442_695_040_888_963_407L)
+                val noise = ((seed ushr 33).toInt() % 2000) / 2000.0
+                samples[index] += (0.55 * exp(-3.0 * i / burst) * noise).toFloat()
+            }
+            start += period
+        }
+        return samples
+    }
+
+    @Test
+    fun `a key survives a percussive layer on top of it`() {
+        val tonal = triadLoop(root = 0, minor = false)
+        val drums = noiseBursts(140.0)
+        val mixed = FloatArray(tonal.size) { i -> (tonal[i] + drums[i]).coerceIn(-1f, 1f) }
+
+        assertEquals(CamelotKey(8, "B"), LocalAnalysis.key(mixed, sampleRate))
+    }
 }

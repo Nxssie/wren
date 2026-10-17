@@ -383,12 +383,7 @@ private fun SetRow(
 
 @Composable
 private fun AnalysisChip(track: MixTrack) {
-    val bpm = track.bpm
-    val key = track.key
-    val label = listOfNotNull(
-        bpm?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else String.format("%.1f", it) },
-        key?.toString()
-    ).joinToString(" · ").ifEmpty { "unknown" }
+    val label = track.analysisLabel
 
     Text(
         label,
