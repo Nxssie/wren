@@ -1,0 +1,50 @@
+# local-analysis — BPM and Camelot key estimated from the audio itself
+
+Branch: `feat/local-analysis` (from `feat/mix-view` @ `34c64fe`)
+Status: implementing.
+
+| Task | Route | Commit |
+| --- | --- | --- |
+| 1 | `shared/.../mix/analysis/` — chroma → Krumhansl key, onset envelope → tempo | inline, test-first (worker failed, see Delivery) | `c6aeec0` |
+| 2 | `desktop/.../analysis/LocalAnalysisProvider.kt` — `BpmKeyProvider` with `isConfigured = true` | inline | `009f09c` |
+| 3 | `desktop/.../analysis/AudioSamples.kt` — decode N seconds to mono PCM with the bundled FFmpeg | inline, test-first | `009f09c` |
+| 4 | `ui/MixScreen.kt` — prefer the local provider, keep the remote one when a key exists | inline | `009f09c` |
+| 5 | README: what is analysed, what it cannot do | inline | `ee8833f` |
+| 6 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 367 tests, 0 failures | — | — |
+
+## Delivery
+
+Slices are the analysis layer (pure math + tests), the desktop bridge (decode + provider wiring), and
+the docs. The DSP slice is the review-heavy one: it decides where tempo and key come from.
+
+The DSP unit was first delegated to `gentle-ai-worker` with the acceptance tests frozen; the worker
+failed without writing anything, so the parent implemented it inline against the same tests. Two
+findings came out of making them pass, both recorded as comments in the code: the lag grid has to be
+fractional (128 BPM sits at 40.375 frames, and the 81-frame point lands closer to the grid), and the
+octave preference band had to be measured at 0.90 because an asymmetric onset envelope makes the
+double-period point score up to ~5% higher on a true 128 BPM pulse train.
+
+## Specs
+
+- **S1.** "pero no tengo forma de conseguir la api key, es mejor recurrir a alguna librería local?"
+- **S2.** Source of the data, chosen from the options offered: *"Todo local: analizador propio
+  completo"* — *"BPM y tonalidad desde el audio: onsets, autocorrelación y croma. Cero red, cero
+  licencias ajenas, más trabajo."*
+- **S3.** *"Coste: ~400 líneas + tests de DSP"* — *"Dependencia: JTransforms (Apache-2.0)"*.
+- **S4.** *"Funciona offline y en las tres plataformas, sin cuotas ni servicios que mueran."*
+- **S5.** *"Riesgo: precisión de BPM mediocre en material no bailable (más falsos dobles/mitades)."* —
+  accepted: the estimate is reported as what it is, and the existing `fold octave` toggle covers
+  half/double time. A wrong tempo must never be silently turned into a confident suggestion.
+- **S6.** Constraint from the repository, not from the ask: Wren is MIT (`LICENSE`), so the analysis
+  code and every new dependency must stay MIT-compatible. Essentia (AGPL-3.0), aubio and
+  libKeyFinder (GPL-3.0) are therefore excluded; JTransforms is Apache-2.0 and lives in `shared`,
+  which both `desktop` and `android` compile against.
+
+## Log
+
+- **L1.** "pero no tengo forma de conseguir la api key, es mejor recurrir a alguna librería local?"
+- **L2.** Answer to the questionnaire: *"Todo local: analizador propio completo"*. Context that led to
+  it, established while resolving L1: GetSongBPM needs a key this user cannot obtain; Deezer returns
+  a real `bpm` for `api.deezer.com/track/<id>` without one but no musical key, and its `/search`
+  omits `bpm`; AcousticBrainz answers 404; MusicBrainz works without a key but carries no tempo or
+  key data.

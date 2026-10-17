@@ -130,10 +130,10 @@ build by hand, not a view over saved music.
 
 - Add tracks from the search box on the right, reorder them with the arrows, play the set from any
   row. The highlighted row is the **anchor** — the track you are mixing away from.
-- **detect tempo + key** fills in BPM and Camelot slot for the tracks that have neither. Results
-  are cached in `~/.config/wren/mix-analysis.json`; a track the provider does not know is retried
-  after 7 days, a hit is kept forever. Without `WREN_GETSONGBPM_KEY` the button explains why it
-  cannot detect anything instead of pretending the tracks are unknown to everyone.
+- **detect tempo + key** fills in BPM and Camelot slot for the tracks that have neither, by
+  analysing the track's own audio: no key, no account, no service that can disappear. Results are
+  cached in `~/.config/wren/mix-analysis.json`; a track the analyser could not read is retried
+  after 7 days, a hit is kept forever.
 - Suggestions are ranked by the harmonic-mixing rules: same slot, the relative key (same number
   on the other side), or one step around the wheel; tempo within ±3/6/9/12%, with half-time and
   double-time tracks folded into the anchor's octave. `harmonics` and `fold octave` turn those
@@ -141,13 +141,25 @@ build by hand, not a view over saved music.
   silently dropped.
 - Sets live in `~/.config/wren/mix-sets.json`.
 
-Tempo and key come from the [GetSongBPM](https://getsongbpm.com/api) web API, behind a
-`BpmKeyProvider` interface so another source can be added without touching the screen.
-[TuneBat](https://tunebat.com/API) has no public finder API of its own — its own site points at the
-paid Songstats partner API — so it is not the default here.
+Tempo and key are estimated locally, from the decoded audio, behind a `BpmKeyProvider` interface so
+another source can be added without touching the screen.
+
+- Tempo: an onset envelope (frame-to-frame energy increase) self-correlated over a 60–200 BPM grid.
+  The grid is walked in BPM rather than in whole analysis frames, because a beat period is almost
+  never a whole number of frames and rounding it manufactures a fake octave error. When two tempi
+  explain the signal almost equally well the faster one wins — the slower reading can always be
+  produced by skipping beats — which is what the `fold octave` toggle then lets you override.
+- Key: an averaged magnitude spectrum folded into a 12-bin chroma vector, correlated against the
+  Krumhansl–Kessler major and minor probe-tone profiles. A flat chroma is reported as *unknown*
+  instead of a confident guess.
+The analyser is conservative on purpose: a wrong tempo or key silently poisons every suggestion
+built on it, so an unreadable track stays unknown rather than being given a plausible number.
+Expect it to be weakest on non-dance material, where half and double time are genuinely ambiguous.
+
+An optional [GetSongBPM](https://getsongbpm.com/api) provider still exists in the codebase behind the
+same interface, for anyone who has a key:
 
 ```bash
-# required for tempo/key detection (free key from https://getsongbpm.com/api)
 export WREN_GETSONGBPM_KEY=your_key
 ```
 
