@@ -14,6 +14,9 @@ Status: implemented; the S7 cache slice is in the working tree, uncommitted.
 | 7 | `mix/MixAnalysis.kt` — provider-scoped cache, and a forced re-ask is stored (S7) | inline, test-first | `f7c7bd9` |
 | 8 | `ui/MixScreen.kt`, `mix/MixStore.kt` — add resolves through the cache; no write when nothing changed | inline | `f7c7bd9` |
 | 9 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 392 tests, 0 failures | — | — |
+| 10 | `mix/analysis/LocalAnalysis.kt` — spectral tilt and a centred profile match (S8) | inline, test-first | `c933cb0` |
+| 11 | `mix/analysis/LocalAnalysisTest.kt` — rich-partial loops as the floor the key must clear | inline, test-first | `c933cb0` |
+| 12 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 394 tests, 0 failures | — | — |
 
 ## Delivery
 
@@ -53,6 +56,20 @@ double-period point score up to ~5% higher on a true 128 BPM pulse train.
   track, every answer is stored by whoever obtained it, and a provider that fails outright still
   stores nothing.
 
+- **S8.** The key reading was weak enough to break the feature. Measured on eight dance classics
+  against published TuneBat/SongData/SongBPM data: no key exact, two harmonically usable, six clashes
+  — and the ranking drops every candidate whose key clashes with the anchor, so most suggestions
+  disappeared. Two causes: the chroma summed *power* with no spectral tilt, so the bass of a master
+  decided the answer, and the profile match was an uncentred dot product, so the profile with the
+  larger total won on any rich chroma. The chroma now uses magnitude with half of the music's
+  6 dB/octave tilt restored, and the match is a Pearson correlation. The floor the tests pin: a
+  harmonically rich major loop reads exactly right in all twelve roots, and no loop — major or minor,
+  any root — may read a slot its own mixing rules call a clash; a relative, a neighbour or `null` are
+  all acceptable. Measured after the change: two keys exact, one the relative, one abstains, four
+  still clash. The remaining weakness is structural — the fifth harmonic of a sawtooth tonic is a
+  major third nobody played — and closing it needs harmonic suppression or a trained model, not
+  another constant.
+
 ## Log
 
 - **L1.** "pero no tengo forma de conseguir la api key, es mejor recurrir a alguna librería local?"
@@ -67,3 +84,14 @@ double-period point score up to ~5% higher on a true 128 BPM pulse train.
   provider's answer wins and the track only fills the half the provider left out — the rule
   `detect` already applied before the merge moved into the mix layer. Reading the cache without
   naming a provider is no longer allowed: an entry belongs to the source that produced it.
+- **L5.** "ve a la clave" — authorisation to attack the key path, recorded as S8.
+- **L6.** Evidence gathered before implementing S8, kept here because it is the benchmark of record:
+  eight classics measured through `AudioSamples.decode` + `LocalAnalysis.analyse` (scratch harness,
+  not committed). Tempo within 1 %: One More Time 122.5 (123), MSBWY 124, I Feel Love 128, Born Slippy
+  140, Show Me Love 120. Half time: Good Life 66 against 132. Misses: Lady 86.75 against 126, Strings
+  of Life 120 against 128. Keys before the change: 7A, 3A, 8A, 3A, 3A, 6A, 8A, 3A — `3A` on four
+  unrelated tonics. Keys after: 6B, null, 8B, 10B, 7B, 5B, 8A, 2B. A whitened chroma was tried and
+  rejected: it broke three existing tests and made the rich-loop round trip worse. The same
+  measurement also showed a source problem — YouTube refuses media fetches (403, PO token) and
+  official SoundCloud uploads are DRM protected, so the corpus came from unofficial uploads and part
+  of the error may belong to the files rather than to the algorithm.
