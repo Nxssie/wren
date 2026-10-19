@@ -153,9 +153,15 @@ another source can be added without touching the screen.
   never a whole number of frames and rounding it manufactures a fake octave error. When two tempi
   explain the signal almost equally well the faster one wins — the slower reading can always be
   produced by skipping beats — which is what the `fold octave` toggle then lets you override.
-- Key: an averaged magnitude spectrum folded into a 12-bin chroma vector, correlated against the
-  Krumhansl–Kessler major and minor probe-tone profiles. A flat chroma is reported as *unknown*
-  instead of a confident guess.
+- Key: a magnitude spectrum per frame, with half of the music's 6 dB/octave tilt put back so the
+  bass stops deciding the answer, folded into a 12-bin chroma vector and matched against the
+  Krumhansl–Kessler major and minor probe-tone profiles with a centred (Pearson) correlation, since
+  the published profiles do not have the same total. A flat chroma, or a winner that is barely ahead
+  of a key the mixing rules would call a clash, is reported as *unknown* instead of a confident guess.
+- Measured against published BPM/key data on eight dance classics, tempo lands within 1 % on five,
+  folds to half time on one and misses on two; of the keys, two are exact, one is the relative, one
+  abstains and four clash. Minor keys with a sawtooth bass are the known weak spot: the fifth
+  harmonic of the tonic is a major third nobody played.
 The analyser is conservative on purpose: a wrong tempo or key silently poisons every suggestion
 built on it, so an unreadable track stays unknown rather than being given a plausible number.
 Expect it to be weakest on non-dance material, where half and double time are genuinely ambiguous.

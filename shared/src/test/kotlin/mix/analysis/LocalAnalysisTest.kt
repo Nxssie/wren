@@ -2,6 +2,7 @@ package mix.analysis
 
 import mix.BpmKey
 import mix.CamelotKey
+import mix.HarmonicRelation
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -69,6 +70,50 @@ class LocalAnalysisTest {
         return samples
     }
 
+    /**
+     * The same I–IV–V loop as [triadLoop], but with the partials an actual record has: a sawtooth-ish
+     * stack per chord tone and a sub bass that carries almost nothing above its own octave. Pure
+     * sines are a signal no track contains, and a full harmonic stack on the bass is not one either —
+     * a 20 %-loud fifth harmonic on the loudest voice is a major third nobody played.
+     */
+    private fun richTriadLoop(root: Int, minor: Boolean, seconds: Double = 8.0): FloatArray {
+        val third = if (minor) 3 else 4
+        val triads = listOf(
+            intArrayOf(root, root + third, root + 7),
+            intArrayOf(root + 5, root + 5 + third, root + 12),
+            intArrayOf(root + 7, root + 7 + third, root + 14)
+        )
+        val samples = FloatArray((sampleRate * seconds).toInt())
+        val beat = (0.5 * sampleRate).toInt()
+        var position = 0
+        var triad = 0
+        while (position < samples.size) {
+            val chord = triads[triad % triads.size]
+            val notes = chord.map { pc -> 440.0 * Math.pow(2.0, (pc - 9) / 12.0) }
+            val bass = 440.0 * Math.pow(2.0, (chord[0] - 9) / 12.0) / 2.0
+            for (i in 0 until beat) {
+                val index = position + i
+                if (index >= samples.size) break
+                val edge = minOf(i, beat - i).toDouble() / (0.01 * sampleRate)
+                val envelope = edge.coerceIn(0.0, 1.0)
+                var value = 0.0
+                for (frequency in notes) {
+                    for (harmonic in 1..6) {
+                        value += 0.12 * envelope *
+                            sin(2 * PI * frequency * harmonic * i / sampleRate) / harmonic
+                    }
+                }
+                // Sub bass: fundamental and its octave only, as a filtered bass actually sounds.
+                value += 0.5 * envelope * sin(2 * PI * bass * i / sampleRate)
+                value += 0.12 * envelope * sin(2 * PI * bass * 2 * i / sampleRate)
+                samples[index] += value.toFloat()
+            }
+            position += beat
+            triad++
+        }
+        return samples
+    }
+
     // ── Tempo ────────────────────────────────────────────────────────────────
 
     @Test
@@ -116,6 +161,45 @@ class LocalAnalysisTest {
     @Test
     fun `G major reads 9B`() {
         assertEquals(CamelotKey(9, "B"), LocalAnalysis.key(triadLoop(root = 7, minor = false), sampleRate))
+    }
+
+    /**
+     * A major loop with real partials has to read exactly right in every root. This is the half the
+     * profiles do settle, and pinning all twelve keeps the chroma honest: a weakened tilt or an
+     * uncentred profile match drops one of them immediately.
+     */
+    @Test
+    fun `a harmonically rich major loop reads its own key in all twelve roots`() {
+        for (pitchClass in 0 until 12) {
+            assertEquals(
+                CamelotKey.ofPitchClass(pitchClass, minor = false),
+                LocalAnalysis.key(richTriadLoop(pitchClass, minor = false), sampleRate),
+                "pitch class $pitchClass"
+            )
+        }
+    }
+
+    /**
+     * What the Mix view actually needs from a key: never a slot its own mixing rules call a clash.
+     *
+     * Minor keys with a sawtooth bass are the residual hard case — the fifth harmonic of the tonic is
+     * a major third nobody played — so on some roots the answer is the relative, a neighbour, or an
+     * honest `null`. All three are usable; a confident unrelated slot is not, because the ranking
+     * drops every candidate whose key clashes with the anchor.
+     */
+    @Test
+    fun `a harmonically rich loop never reads a key that would clash with its own`() {
+        val offenders = mutableListOf<String>()
+        for (pitchClass in 0 until 12) {
+            for (minor in booleanArrayOf(false, true)) {
+                val expected = CamelotKey.ofPitchClass(pitchClass, minor)
+                val actual = LocalAnalysis.key(richTriadLoop(pitchClass, minor), sampleRate)
+                if (actual != null && actual.relationTo(expected) == HarmonicRelation.NONE) {
+                    offenders += "pc=$pitchClass ${if (minor) "minor" else "major"}: expected $expected, was $actual"
+                }
+            }
+        }
+        assertTrue(offenders.isEmpty(), offenders.joinToString("\n"))
     }
 
     @Test

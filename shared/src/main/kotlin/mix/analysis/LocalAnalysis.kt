@@ -245,8 +245,7 @@ object LocalAnalysis {
         if (samples.size < CHROMA_FRAME || sampleRate <= 0) return null
 
         val chroma = chroma(samples, sampleRate)
-        val total = chroma.sum()
-        if (total <= 1e-9) return null
+        if (chroma.sum() <= 1e-9) return null
 
         var bestScore = Double.NEGATIVE_INFINITY
         var secondScore = Double.NEGATIVE_INFINITY
@@ -258,7 +257,7 @@ object LocalAnalysis {
         for (minor in booleanArrayOf(false, true)) {
             val profile = if (minor) MINOR_PROFILE else MAJOR_PROFILE
             for (tonic in 0 until 12) {
-                val score = correlated(chroma, profile, tonic) / total
+                val score = correlated(chroma, profile, tonic)
                 if (score > bestScore) {
                     secondScore = bestScore
                     secondPitchClass = bestPitchClass
@@ -296,7 +295,13 @@ object LocalAnalysis {
     internal fun tieIsCompatible(best: CamelotKey, runnerUp: CamelotKey): Boolean =
         best.relationTo(runnerUp) != HarmonicRelation.NONE
 
-    /** Energy per pitch class over the whole buffer, folded from the averaged magnitude spectrum. */
+    /**
+     * Energy per pitch class over the whole buffer, folded from each frame's magnitude spectrum with
+     * half of the music's spectral tilt put back.
+     *
+     * That tilt is what makes this usable at all: a bare power spectrum of a finished mix is mostly
+     * bass, and with the low end deciding, every minor key came out as its parallel major.
+     */
     private fun chroma(samples: FloatArray, sampleRate: Int): DoubleArray {
         val chroma = DoubleArray(12)
         val fft = DoubleFFT_1D(CHROMA_FRAME.toLong())
@@ -316,7 +321,9 @@ object LocalAnalysis {
                 val im = buffer[2 * bin + 1]
                 val frequency = bin * binHz
                 if (frequency < MIN_KEY_HZ || frequency > MAX_KEY_HZ) continue
-                val magnitude = re * re + im * im
+                // Music drops about 6 dB per octave, so a bare power spectrum is mostly bass; half of
+                // that tilt is put back, which keeps the low end present without letting it decide.
+                val magnitude = kotlin.math.sqrt(re * re + im * im) * kotlin.math.sqrt(frequency)
                 if (magnitude <= 0.0) continue
                 chroma[pitchClassOf(frequency)] += magnitude
             }
@@ -331,12 +338,37 @@ object LocalAnalysis {
         return ((semitones.roundToInt() % 12) + 12) % 12
     }
 
-    /** Sum of the profile against the chroma rotated so [tonic] sits at the profile's first degree. */
+    /**
+     * Pearson correlation between the chroma rotated so [tonic] sits at the profile's first degree
+     * and the profile itself.
+     *
+     * Both sides are centred and normalised first, and both matter. The published profiles do not
+     * have the same total, so an uncentred dot product rewards the profile with the bigger sum on any
+     * rich chroma no matter its shape; and a mastered track has a large constant floor plus a bass
+     * that outweighs everything up to 2 kHz, which without centring decides the answer. Measured on
+     * real tracks, the uncentred version read every minor key as its parallel major.
+     */
     private fun correlated(chroma: DoubleArray, profile: DoubleArray, tonic: Int): Double {
-        var score = 0.0
+        var chromaMean = 0.0
+        var profileMean = 0.0
         for (degree in 0 until 12) {
-            score += chroma[(tonic + degree) % 12] * profile[degree]
+            chromaMean += chroma[(tonic + degree) % 12]
+            profileMean += profile[degree]
         }
-        return score
+        chromaMean /= 12.0
+        profileMean /= 12.0
+
+        var dot = 0.0
+        var chromaVar = 0.0
+        var profileVar = 0.0
+        for (degree in 0 until 12) {
+            val c = chroma[(tonic + degree) % 12] - chromaMean
+            val p = profile[degree] - profileMean
+            dot += c * p
+            chromaVar += c * c
+            profileVar += p * p
+        }
+        val denominator = kotlin.math.sqrt(chromaVar * profileVar)
+        return if (denominator <= 1e-12) 0.0 else dot / denominator
     }
 }
