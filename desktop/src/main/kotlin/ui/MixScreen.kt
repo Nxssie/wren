@@ -124,19 +124,13 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
             detecting = true
             withContext(Dispatchers.IO) {
                 current.tracks.forEach { track ->
-                    // A track with a tempo but no key counts as analysed, so it has to be refilled
-                    // explicitly or its missing half would never be asked for again.
+                    // A track with a tempo but no key still has a half to fill, so it is re-asked
+                    // explicitly instead of being treated as done.
                     val incomplete = track.bpm == null || track.key == null
                     val answer = if (incomplete) MixAnalysis.refill(track, lookupProvider)
                     else MixAnalysis.resolve(track, lookupProvider)
                     if (answer != null) {
-                        // Keep the half that is already known when only the other one came back.
-                        MixStore.recordAnalysis(
-                            current.id,
-                            track.id,
-                            answer.bpm ?: track.bpm,
-                            answer.camelot?.toString() ?: track.camelot
-                        )
+                        MixStore.recordAnalysis(current.id, track.id, answer.bpm, answer.camelot?.toString())
                     }
                 }
             }
@@ -146,8 +140,10 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
     }
 
     /**
-     * Puts [track] in the set and, when it carries no analysis yet, runs the one decode that makes
-     * it scoreable. Without that the new row sits at "—" until someone presses detect.
+     * Puts [track] in the set and fills in its tempo and key, resolving through the cache first.
+     *
+     * [MixAnalysis.resolve] rather than a forced re-ask: the answer for this track may already be
+     * cached from another set, and adding a row must not pay for a download the cache can serve.
      */
     fun addToSet(track: MixTrack) {
         val current = set ?: return
@@ -156,11 +152,10 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
                 runCatching { MixStore.addTrack(current.id, track) }.getOrDefault(sets)
             }
             sets = updated
-            if (track.isAnalysed) return@launch
 
             detecting = true
             val analysed = withContext(Dispatchers.IO) {
-                val answer = MixAnalysis.refill(track, lookupProvider) ?: return@withContext null
+                val answer = MixAnalysis.resolve(track, lookupProvider) ?: return@withContext null
                 runCatching {
                     MixStore.recordAnalysis(current.id, track.id, answer.bpm, answer.camelot?.toString())
                 }.getOrNull()

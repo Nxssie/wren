@@ -44,10 +44,10 @@ class MixAnalysisTest {
 
     private class FakeProvider(
         private val answer: BpmKey?,
-        override val isConfigured: Boolean = true
+        override val isConfigured: Boolean = true,
+        override val name: String = "fake"
     ) : BpmKeyProvider {
         var calls = 0
-        override val name = "fake"
         override fun lookup(artist: String, title: String): BpmKey? {
             calls++
             return answer
@@ -104,8 +104,39 @@ class MixAnalysisTest {
         val provider = FakeProvider(answer = null, isConfigured = false)
 
         assertNull(MixAnalysis.resolve(track(), provider, now = 1L))
-        assertNull(MixAnalysis.cached("YT_MUSIC:abc", now = 2L))
+        assertNull(MixAnalysis.cached("YT_MUSIC:abc", "fake", now = 2L))
         assertEquals(0, provider.calls)
+    }
+
+    // ── Cache scope ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `a miss from one provider does not hide the track from another`() {
+        val remote = FakeProvider(answer = null, name = "getsongbpm")
+        val local = FakeProvider(BpmKey(bpm = 128.0, camelot = CamelotKey(8, "A"), provider = "local"), name = "local")
+        val now = 1_700_000_000_000L
+
+        assertNull(MixAnalysis.resolve(track(), remote, now = now))
+        val answer = MixAnalysis.resolve(track(), local, now = now + 1_000L)
+
+        assertEquals(1, local.calls, "a provider that never answered says nothing about the next one")
+        assertEquals(128.0, answer?.bpm)
+    }
+
+    @Test
+    fun `a hit from one provider is not served to another`() {
+        val remote = FakeProvider(
+            BpmKey(bpm = 122.0, camelot = CamelotKey(4, "A"), provider = "getsongbpm"),
+            name = "getsongbpm"
+        )
+        val local = FakeProvider(BpmKey(bpm = 128.0, camelot = CamelotKey(8, "A"), provider = "local"), name = "local")
+        val now = 1_700_000_000_000L
+
+        MixAnalysis.resolve(track(), remote, now = now)
+        val answer = MixAnalysis.resolve(track(), local, now = now + 1_000L)
+
+        assertEquals(1, local.calls, "each provider's answer is its own")
+        assertEquals(128.0, answer?.bpm)
     }
 
     @Test
@@ -141,7 +172,13 @@ class MixAnalysisTest {
             now = 1_700_000_000_000L
         )
 
-        val served = MixAnalysis.resolve(track(), provider = null, now = 1_700_000_000_500L)
+        // A fresh provider stands in for a new process: the answer has to come from the file, so it
+        // wins over what this one would say.
+        val served = MixAnalysis.resolve(
+            track(),
+            FakeProvider(BpmKey(bpm = 999.0, camelot = CamelotKey(1, "B"), provider = "fake")),
+            now = 1_700_000_000_500L
+        )
 
         assertEquals(122.0, served?.bpm)
         assertEquals(CamelotKey(4, "A"), served?.camelot)
@@ -151,7 +188,7 @@ class MixAnalysisTest {
     fun `a corrupted cache degrades to empty instead of throwing`() {
         File(tempDir, "mix-analysis.json").writeText("{ nope")
 
-        assertNull(MixAnalysis.cached("YT_MUSIC:abc", now = 1L))
+        assertNull(MixAnalysis.cached("YT_MUSIC:abc", "fake", now = 1L))
         assertNotNull(
             MixAnalysis.resolve(
                 track(),
@@ -169,7 +206,42 @@ class MixAnalysisTest {
             now = 1_700_000_000_000L
         )
         MixAnalysis.clear()
-        assertNull(MixAnalysis.cached("YT_MUSIC:abc", now = 1_700_000_000_000L))
+        assertNull(MixAnalysis.cached("YT_MUSIC:abc", "fake", now = 1_700_000_000_000L))
+    }
+
+    // ── Refill ───────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a refill is stored, so the cheap path does not pay for the same download again`() {
+        val provider = FakeProvider(BpmKey(bpm = null, camelot = CamelotKey(8, "A"), provider = "fake"))
+
+        MixAnalysis.refill(track(bpm = 177.5), provider)
+        val served = MixAnalysis.resolve(track(bpm = 177.5), provider)
+
+        assertEquals(1, provider.calls)
+        assertEquals(177.5, served?.bpm, "the half the provider did not answer is kept")
+        assertEquals(CamelotKey(8, "A"), served?.camelot)
+    }
+
+    @Test
+    fun `a refill that finds nothing is remembered as a miss`() {
+        val provider = FakeProvider(answer = null)
+
+        MixAnalysis.refill(track(), provider)
+        assertNull(MixAnalysis.resolve(track(), provider))
+
+        assertEquals(1, provider.calls)
+    }
+
+    @Test
+    fun `an incomplete track asks the provider instead of trusting the half it has`() {
+        val provider = FakeProvider(BpmKey(bpm = null, camelot = CamelotKey(8, "A"), provider = "fake"))
+
+        val answer = MixAnalysis.resolve(track(bpm = 177.5), provider, now = 1L)
+
+        assertEquals(1, provider.calls, "a track with a tempo but no key still has a half to fill")
+        assertEquals(177.5, answer?.bpm)
+        assertEquals(CamelotKey(8, "A"), answer?.camelot)
     }
 
     @Test
@@ -193,6 +265,9 @@ class MixAnalysisTest {
         }
 
         assertNull(MixAnalysis.refill(track(bpm = 177.5), unavailable))
-        assertNull(MixAnalysis.cached("YT_MUSIC:abc"), "a failure must not become a remembered answer")
+        assertNull(
+            MixAnalysis.cached("YT_MUSIC:abc", "unavailable"),
+            "a failure must not become a remembered answer"
+        )
     }
 }

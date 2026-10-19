@@ -131,9 +131,13 @@ build by hand, not a view over saved music.
 - Add tracks from the search box on the right, reorder them with the arrows, play the set from any
   row. The highlighted row is the **anchor** — the track you are mixing away from.
 - **detect tempo + key** fills in BPM and Camelot slot for the tracks that have neither, by
-  analysing the track's own audio: no key, no account, no service that can disappear. Results are
-  cached in `~/.config/wren/mix-analysis.json`; a track the analyser could not read is retried
-  after 7 days, a hit is kept forever.
+  analysing the track's own audio: no key, no account, no service that can disappear. Adding a
+  track resolves through the cache first, so the same track in a second set costs nothing. Results
+  are cached per source in `~/.config/wren/mix-analysis.json`: a hit is kept forever, a track the
+  analyser could not read is retried after 7 days, and a provider that failed outright is not
+  remembered at all. The cache is keyed by source as well as track — an answer from one provider
+  never stands in for another — and pressing **detect tempo + key** is the explicit re-ask that
+  overrides what is stored.
 - Suggestions are ranked by the harmonic-mixing rules: same slot, the relative key (same number
   on the other side), or one step around the wheel; tempo within ±3/6/9/12%, with half-time and
   double-time tracks folded into the anchor's octave. `harmonics` and `fold octave` turn those
