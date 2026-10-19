@@ -1,7 +1,7 @@
 # local-analysis — BPM and Camelot key estimated from the audio itself
 
 Branch: `feat/local-analysis` (from `feat/mix-view` @ `34c64fe`)
-Status: implementing.
+Status: implemented; the S7 cache slice is in the working tree, uncommitted.
 
 | Task | Route | Commit |
 | --- | --- | --- |
@@ -9,8 +9,11 @@ Status: implementing.
 | 2 | `desktop/.../analysis/LocalAnalysisProvider.kt` — `BpmKeyProvider` with `isConfigured = true` | inline | `009f09c` |
 | 3 | `desktop/.../analysis/AudioSamples.kt` — decode N seconds to mono PCM with the bundled FFmpeg | inline, test-first | `009f09c` |
 | 4 | `ui/MixScreen.kt` — prefer the local provider, keep the remote one when a key exists | inline | `009f09c` |
-| 5 | README: what is analysed, what it cannot do | inline | `ee8833f` |
+| 5 | README: what is analysed, what it cannot do | inline | `84c3b46` |
 | 6 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 367 tests, 0 failures | — | — |
+| 7 | `mix/MixAnalysis.kt` — provider-scoped cache, and a forced re-ask is stored (S7) | inline, test-first | pending commit |
+| 8 | `ui/MixScreen.kt`, `mix/MixStore.kt` — add resolves through the cache; no write when nothing changed | inline | pending commit |
+| 9 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 392 tests, 0 failures | — | — |
 
 ## Delivery
 
@@ -40,6 +43,16 @@ double-period point score up to ~5% higher on a true 128 BPM pulse train.
   libKeyFinder (GPL-3.0) are therefore excluded; JTransforms is Apache-2.0 and lives in `shared`,
   which both `desktop` and `android` compile against.
 
+- **S7.** Defect found while reviewing the branch: the local analyser's answer was never written to
+  the cache. `refill` — the only path the screen used for an unanalysed track — discarded it, and
+  `resolve` was only ever reached for tracks that already carried an answer. The README promised a
+  cache that stayed empty, and adding the same track to a second set re-resolved its stream URL and
+  re-decoded up to six minutes of audio. Second half of the same defect: entries were keyed by track
+  alone, so a miss from the metadata provider hid the track from the analyser for the whole 7-day
+  TTL, and a metadata hit shadowed the audio answer forever. The cache is now keyed by source **and**
+  track, every answer is stored by whoever obtained it, and a provider that fails outright still
+  stores nothing.
+
 ## Log
 
 - **L1.** "pero no tengo forma de conseguir la api key, es mejor recurrir a alguna librería local?"
@@ -48,3 +61,9 @@ double-period point score up to ~5% higher on a true 128 BPM pulse train.
   a real `bpm` for `api.deezer.com/track/<id>` without one but no musical key, and its `/search`
   omits `bpm`; AcousticBrainz answers 404; MusicBrainz works without a key but carries no tempo or
   key data.
+- **L3.** "si, empieza por el slice de caché" — authorisation to implement the cache defect recorded
+  as S7.
+- **L4.** Decision taken while implementing S7: where a forced re-ask and the track disagree, the
+  provider's answer wins and the track only fills the half the provider left out — the rule
+  `detect` already applied before the merge moved into the mix layer. Reading the cache without
+  naming a provider is no longer allowed: an entry belongs to the source that produced it.
