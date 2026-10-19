@@ -11,8 +11,8 @@ Status: implemented; the S7 cache slice is in the working tree, uncommitted.
 | 4 | `ui/MixScreen.kt` — prefer the local provider, keep the remote one when a key exists | inline | `009f09c` |
 | 5 | README: what is analysed, what it cannot do | inline | `84c3b46` |
 | 6 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 367 tests, 0 failures | — | — |
-| 7 | `mix/MixAnalysis.kt` — provider-scoped cache, and a forced re-ask is stored (S7) | inline, test-first | pending commit |
-| 8 | `ui/MixScreen.kt`, `mix/MixStore.kt` — add resolves through the cache; no write when nothing changed | inline | pending commit |
+| 7 | `mix/MixAnalysis.kt` — provider-scoped cache, and a forced re-ask is stored (S7) | inline, test-first | `f7c7bd9` |
+| 8 | `ui/MixScreen.kt`, `mix/MixStore.kt` — add resolves through the cache; no write when nothing changed | inline | `f7c7bd9` |
 | 9 | Verify: `./gradlew :shared:test :desktop:test :desktop:compileKotlin` — 392 tests, 0 failures | — | — |
 
 ## Delivery
