@@ -171,6 +171,7 @@ fun AppWindow(uiScale: Float, onCloseRequest: () -> Unit) {
                                     onArtistClick = { id, name -> artistBrowseId = id; artistName = name }
                                 )
                             }
+                            selectedTab == 4 -> MixScreen(provider = provider, player = player)
                         }
 
                         // Over the tab, not instead of it: closing the player returns to whatever the
@@ -298,6 +299,12 @@ private fun Sidebar(
             label = "library",
             selected = selectedTab == 3 && !nowPlaying,
             onClick = { onTabChange(3) }
+        )
+        NavItem(
+            code = "MIX",
+            label = "mix",
+            selected = selectedTab == 4 && !nowPlaying,
+            onClick = { onTabChange(4) }
         )
 
         Spacer(Modifier.weight(1f))

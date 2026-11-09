@@ -56,6 +56,7 @@
 - Android home-screen widget: now playing with play/pause and skip, driven by the same playback service
 - Stream URL resolution via `yt-dlp` (bundled in AppImage, or available in PATH)
 - 4-hour stream URL cache for YouTube, 20-minute cache for SoundCloud progressive streams
+- Mix view (desktop): hand-built DJ sets with tempo/key detection and harmonic "what mixes next" suggestions
 
 ## Stack
 
@@ -120,6 +121,34 @@ android/app/src/main/kotlin/com/wren/app/
 ├── player/ExoPlayerEngine.kt # Media3/ExoPlayer PlayerEngine implementation
 ├── playback/                 # Foreground service + transport notification
 └── ui/                       # Compose UI (search, discover, now playing, player bar)
+```
+
+## Mix view (desktop)
+
+The sidebar's `MIX` tab is a DJ view, separate from the Library: a set is an ordered selection you
+build by hand, not a view over saved music.
+
+- Add tracks from the search box on the right, reorder them with the arrows, play the set from any
+  row. The highlighted row is the **anchor** — the track you are mixing away from.
+- **detect tempo + key** fills in BPM and Camelot slot for the tracks that have neither. Results
+  are cached in `~/.config/wren/mix-analysis.json`; a track the provider does not know is retried
+  after 7 days, a hit is kept forever. Without `WREN_GETSONGBPM_KEY` the button explains why it
+  cannot detect anything instead of pretending the tracks are unknown to everyone.
+- Suggestions are ranked by the harmonic-mixing rules: same slot, the relative key (same number
+  on the other side), or one step around the wheel; tempo within ±3/6/9/12%, with half-time and
+  double-time tracks folded into the anchor's octave. `harmonics` and `fold octave` turn those
+  rules off, and a clashing key or an out-of-range tempo is listed as *left out* rather than
+  silently dropped.
+- Sets live in `~/.config/wren/mix-sets.json`.
+
+Tempo and key come from the [GetSongBPM](https://getsongbpm.com/api) web API, behind a
+`BpmKeyProvider` interface so another source can be added without touching the screen.
+[TuneBat](https://tunebat.com/API) has no public finder API of its own — its own site points at the
+paid Songstats partner API — so it is not the default here.
+
+```bash
+# required for tempo/key detection (free key from https://getsongbpm.com/api)
+export WREN_GETSONGBPM_KEY=your_key
 ```
 
 ## Requirements
