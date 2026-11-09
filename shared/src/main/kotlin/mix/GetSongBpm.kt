@@ -22,6 +22,13 @@ interface BpmKeyProvider {
     val isConfigured: Boolean
 
     fun lookup(artist: String, title: String): BpmKey?
+
+    /**
+     * The track-aware entry point. A metadata provider answers from artist and title; an analyser
+     * that needs the audio itself overrides this, because the two artists/titles alone carry no
+     * tempo and no key.
+     */
+    fun lookup(track: MixTrack): BpmKey? = lookup(track.artist, track.title)
 }
 
 /**

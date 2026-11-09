@@ -85,6 +85,8 @@ object MixStore {
         val current = sets()
         if (current.none { it.id == setId }) return current
         val updated = current.map { if (it.id == setId) transform(it) else it }
+        // Nothing changed: rewriting the file would only risk a torn write for no new fact.
+        if (updated == current) return current
         write(updated)
         return updated
     }

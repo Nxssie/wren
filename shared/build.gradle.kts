@@ -22,6 +22,9 @@ dependencies {
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     api("com.squareup.okhttp3:okhttp:4.12.0")
+    // FFT for the local tempo/key estimation. Apache-2.0 on purpose: Wren is MIT (S6 in
+    // odd/tasks/local-analysis.md), so no AGPL/GPL analyser can be linked in.
+    implementation("com.github.wendykierp:JTransforms:3.1")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

@@ -1,5 +1,6 @@
 package ui
 
+import analysis.LocalAnalysisProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,7 +36,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mix.Affinity
 import mix.Discovery
-import mix.GetSongBpmProvider
 import mix.MixAnalysis
 import mix.MixDiscovery
 import mix.MixFilters
@@ -61,7 +61,7 @@ private val TOLERANCES = listOf(3.0, 6.0, 9.0, 12.0)
 @Composable
 fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
     val scope = rememberCoroutineScope()
-    val lookupProvider = remember { GetSongBpmProvider() }
+    val lookupProvider = remember { LocalAnalysisProvider() }
 
     var sets by remember { mutableStateOf<List<MixSet>>(emptyList()) }
     var selectedSetId by remember { mutableStateOf<String?>(null) }
@@ -104,6 +104,11 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
     val discovered = remember(results, anchor, filters) {
         MixDiscovery.of(anchor, results.map { it.toMixTrack() }, filters)
     }
+    // What the user already has elsewhere that mixes with the anchor: the set being edited is
+    // excluded, because its own tracks are the in-set list just above.
+    val repertoire = remember(sets, set?.id, anchor, filters) {
+        MixDiscovery.repertoire(sets, set?.id, anchor, filters)
+    }
 
     fun mutate(block: () -> List<MixSet>) {
         scope.launch {
@@ -118,14 +123,44 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
         scope.launch {
             detecting = true
             withContext(Dispatchers.IO) {
-                current.tracks.filterNot { it.isAnalysed }.forEach { track ->
-                    val answer = MixAnalysis.resolve(track, lookupProvider)
+                current.tracks.forEach { track ->
+                    // A track with a tempo but no key still has a half to fill, so it is re-asked
+                    // explicitly instead of being treated as done.
+                    val incomplete = track.bpm == null || track.key == null
+                    val answer = if (incomplete) MixAnalysis.refill(track, lookupProvider)
+                    else MixAnalysis.resolve(track, lookupProvider)
                     if (answer != null) {
                         MixStore.recordAnalysis(current.id, track.id, answer.bpm, answer.camelot?.toString())
                     }
                 }
             }
             reload()
+            detecting = false
+        }
+    }
+
+    /**
+     * Puts [track] in the set and fills in its tempo and key, resolving through the cache first.
+     *
+     * [MixAnalysis.resolve] rather than a forced re-ask: the answer for this track may already be
+     * cached from another set, and adding a row must not pay for a download the cache can serve.
+     */
+    fun addToSet(track: MixTrack) {
+        val current = set ?: return
+        scope.launch {
+            val updated = withContext(Dispatchers.IO) {
+                runCatching { MixStore.addTrack(current.id, track) }.getOrDefault(sets)
+            }
+            sets = updated
+
+            detecting = true
+            val analysed = withContext(Dispatchers.IO) {
+                val answer = MixAnalysis.resolve(track, lookupProvider) ?: return@withContext null
+                runCatching {
+                    MixStore.recordAnalysis(current.id, track.id, answer.bpm, answer.camelot?.toString())
+                }.getOrNull()
+            }
+            if (analysed != null) sets = analysed
             detecting = false
         }
     }
@@ -167,6 +202,7 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
             anchor = anchor,
             inSet = inSet,
             discovered = discovered,
+            repertoire = repertoire,
             detecting = detecting,
             lookupConfigured = lookupProvider.isConfigured,
             providerLabel = provider.platform.label,
@@ -182,7 +218,7 @@ fun MixScreen(provider: MusicProvider, player: FFmpegPlayer) {
                 val index = tracks.indexOfFirst { it.id == track.id }
                 if (index >= 0) player.loadQueue(tracks.map { it.toQueueItem() }, index)
             },
-            onAdd = { track -> set?.let { s -> mutate { MixStore.addTrack(s.id, track) } } },
+            onAdd = ::addToSet,
             onAnchor = { anchorId = it.id },
             query = query,
             onQuery = { query = it },
@@ -383,12 +419,7 @@ private fun SetRow(
 
 @Composable
 private fun AnalysisChip(track: MixTrack) {
-    val bpm = track.bpm
-    val key = track.key
-    val label = listOfNotNull(
-        bpm?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else String.format("%.1f", it) },
-        key?.toString()
-    ).joinToString(" · ").ifEmpty { "unknown" }
+    val label = track.analysisLabel
 
     Text(
         label,
@@ -407,6 +438,7 @@ private fun NextPane(
     anchor: MixTrack?,
     inSet: MixRanking?,
     discovered: Discovery,
+    repertoire: MixRanking?,
     detecting: Boolean,
     lookupConfigured: Boolean,
     providerLabel: String,
@@ -479,7 +511,7 @@ private fun NextPane(
             }
             Spacer(Modifier.width(10.dp))
             Text(
-                if (lookupConfigured) "via getsongbpm" else "set WREN_GETSONGBPM_KEY to detect",
+                if (lookupConfigured) "analysed from the audio" else "no analyser available",
                 color = if (lookupConfigured) PsSteel400 else PsSignalDanger,
                 fontFamily = FontMono,
                 fontSize = 10.sp
@@ -504,6 +536,20 @@ private fun NextPane(
                 action = null,
                 onPlay = onPlay,
                 onAnchor = onAnchor
+            )
+        }
+
+        if (repertoire != null && (repertoire.suggestions.isNotEmpty() || repertoire.unranked.isNotEmpty())) {
+            Spacer(Modifier.height(16.dp))
+            Text("_repertoire;", color = PsPearl300.copy(alpha = 0.6f), fontFamily = FontMono, fontSize = 9.sp, letterSpacing = 1.7.sp)
+            Spacer(Modifier.height(6.dp))
+            SuggestionList(
+                ranking = repertoire,
+                emptyText = "nothing else in your sets mixes with this anchor",
+                action = "+",
+                onPlay = onPlay,
+                onAnchor = onAnchor,
+                onAdd = onAdd
             )
         }
 
