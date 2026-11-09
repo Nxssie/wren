@@ -1,7 +1,8 @@
 # mix-view — a DJ set view with BPM/Camelot affinity
 
 Branch: `feat/mix-view` (from `main` @ `abf22e0`)
-Status: implemented and verified; open as PR #18.
+Status: merged as PR #18 (`14bb1f5`, 2026-11-09). Slice A of the Mix delivery; slice B is
+`local-analysis`.
 
 | Task | Route | Commit |
 | --- | --- | --- |

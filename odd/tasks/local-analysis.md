@@ -1,7 +1,7 @@
 # local-analysis — BPM and Camelot key estimated from the audio itself
 
-Branch: `feat/local-analysis` (from `feat/mix-view` @ `34c64fe`)
-Status: implemented; the S7 cache slice is in the working tree, uncommitted.
+Branch: `feat/local-analysis` (from `feat/mix-view` @ `34c64fe`, rebased onto `14bb1f5` by merging `main`)
+Status: implemented and verified on the merged tree; open as the stacked PR that follows #18.
 
 | Task | Route | Commit |
 | --- | --- | --- |
@@ -29,6 +29,20 @@ findings came out of making them pass, both recorded as comments in the code: th
 fractional (128 BPM sits at 40.375 frames, and the 81-frame point lands closer to the grid), and the
 octave preference band had to be measured at 0.90 because an asymmetric onset envelope makes the
 double-period point score up to ~5% higher on a true 128 BPM pulse train.
+
+**Slice B of the Mix delivery.** The Mix view shipped first as PR #18 (`14bb1f5`, 2026-11-09); this
+branch carries the 17 commits that follow it and is opened as its own PR against `main`. The branch
+merged `main` before opening so the PR is reviewed on the same tree CI builds.
+
+The remote provider stays. `GetSongBPM` cannot run without `WREN_GETSONGBPM_KEY`, which this user
+cannot obtain, so the local analyser is the primary source and the remote one remains available to
+anyone who has a key. That is a deliberate decision recorded here rather than dead code left behind:
+the interface (`BpmKeyProvider`) has two implementations on purpose, and the README says which one
+runs by default and what it cannot detect.
+
+**Evidence on the merged tree.** `mise exec -- ./gradlew :shared:test :desktop:test
+:desktop:compileKotlin` under JDK 21.0.2: 394 tests, 0 failures, 0 skipped. 116 of them sit under
+`mix.*`, which is where the DSP and cache rules are pinned.
 
 ## Specs
 
