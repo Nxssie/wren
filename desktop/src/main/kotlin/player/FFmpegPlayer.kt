@@ -373,11 +373,13 @@ class FFmpegPlayer {
     /**
      * Whether [e] is the provider refusing to serve the stream rather than a local failure.
      * FFmpeg reports it as an open/read error whose message carries the HTTP status ("HTTP error
-     * 403 Forbidden" / "Server returned 403 Forbidden"); anything else keeps its stack trace.
+     * 403 Forbidden" / "Server returned 403 Forbidden"). The status code is matched together with
+     * the phrase that introduces it, so an unrelated error whose text happens to contain "403" or
+     * "Forbidden" keeps its stack trace.
      */
     private fun isProviderRefusal(e: Throwable): Boolean {
         val message = e.message.orEmpty()
-        return "403" in message || "Forbidden" in message
+        return "HTTP error 403" in message || "Server returned 403" in message
     }
 
     /** Writes the running measurement for the track playing now, off the playback thread. */
